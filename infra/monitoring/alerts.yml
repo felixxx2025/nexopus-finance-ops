@@ -1,0 +1,63 @@
+groups:
+  - name: nexopus_api
+    rules:
+      - alert: APIHighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Alta taxa de erros na API (>5%)"
+          description: "Taxa de erros 5xx: {{ $value | humanizePercentage }}"
+
+      - alert: APIHighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Latência P95 alta (>500ms)"
+          description: "P95 = {{ $value }}s"
+
+      - alert: APIDown
+        expr: up{job="nexopus-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API Nexopus offline"
+
+  - name: nexopus_infra
+    rules:
+      - alert: PostgresDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL offline"
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis offline"
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Uso de memória >90%"
+          description: "Memória usada: {{ $value | humanizePercentage }}"
+
+      - alert: HighDiskUsage
+        expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Uso de disco >85%"

@@ -1,23 +1,47 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useRouter } from "next/router";
+import { useEffect, useRef, useState } from "react";
+import { useAuth } from "../contexts/AuthContext";
+import { uploadDocument } from "../lib/api";
 
 type UploadStatus = "idle" | "uploading" | "success" | "error";
 
 export default function Upload() {
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const router = useRouter();
   const [status, setStatus] = useState<UploadStatus>("idle");
   const [docId, setDocId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Redireciona para login se não autenticado
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      router.push("/login");
+    }
+  }, [isAuthenticated, authLoading, router]);
+
+  if (authLoading) return null;
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const file = inputRef.current?.files?.[0];
     if (!file) return;
 
-    const allowed = ["application/pdf", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "text/plain"];
+    const allowed = [
+      "application/pdf",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "text/plain",
+    ];
     if (!allowed.includes(file.type)) {
       setErrorMsg("Apenas PDF, Excel (.xlsx) ou SPED (.txt) são aceitos.");
+      setStatus("error");
+      return;
+    }
+
+    if (file.size > 50 * 1024 * 1024) {
+      setErrorMsg("Arquivo excede o limite de 50 MB.");
       setStatus("error");
       return;
     }
@@ -25,23 +49,8 @@ export default function Upload() {
     setStatus("uploading");
     setErrorMsg(null);
 
-    const formData = new FormData();
-    formData.append("file", file);
-
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-      const res = await fetch(`${apiUrl}/documents/upload`, {
-        method: "POST",
-        body: formData,
-        // TODO: adicionar header Authorization: Bearer <token>
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.detail ?? "Erro ao enviar arquivo");
-      }
-
-      const data = await res.json();
+      const data = await uploadDocument(file);
       setDocId(data.doc_id);
       setStatus("success");
       if (inputRef.current) inputRef.current.value = "";
@@ -55,13 +64,18 @@ export default function Upload() {
     <div className="max-w-xl mx-auto space-y-6">
       <h1 className="text-2xl font-bold text-gray-800">Upload de Documento</h1>
       <p className="text-sm text-gray-500">
-        Envie um PDF, planilha Excel ou arquivo SPED. A IA irá extrair os dados e gerar os lançamentos
-        automaticamente.
+        Envie um PDF, planilha Excel ou arquivo SPED. A IA irá extrair os dados
+        e gerar os lançamentos automaticamente.
       </p>
 
-      <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow p-6 space-y-4">
+      <form
+        onSubmit={handleSubmit}
+        className="bg-white rounded-xl shadow p-6 space-y-4"
+      >
         <label className="block">
-          <span className="text-sm font-medium text-gray-700">Selecionar arquivo</span>
+          <span className="text-sm font-medium text-gray-700">
+            Selecionar arquivo
+          </span>
           <input
             ref={inputRef}
             type="file"
@@ -85,7 +99,9 @@ export default function Upload() {
 
       {status === "success" && (
         <div className="rounded-lg bg-green-50 border border-green-300 text-green-800 px-4 py-3 text-sm">
-          Documento enviado com sucesso! ID: <code className="font-mono">{docId}</code>. Processamento em andamento.
+          Documento enviado com sucesso! ID:{" "}
+          <code className="font-mono">{docId}</code>. Processamento em
+          andamento.
         </div>
       )}
 
