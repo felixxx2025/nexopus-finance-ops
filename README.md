@@ -121,6 +121,11 @@ Use o `access_token` retornado como `Authorization: Bearer <token>` em todas as 
 | `GET`   | `/companies`                            | any   | Lista empresas                      |
 | `POST`  | `/companies/{id}/seed-accounts`         | admin | Semeia plano de contas NBC TG       |
 
+### Nexopus Copilot
+| Método  | Endpoint  | Role  | Descrição                            |
+| ------- | --------- | ----- | ------------------------------------ |
+| `POST`  | `/chat`    | any   | Assistente de contabilidade com RAG |
+
 ### Admin
 | Método  | Endpoint             | Role  | Descrição                 |
 | ------- | -------------------- | ----- | ------------------------- |
@@ -209,7 +214,35 @@ Veja [.env.example](.env.example). Variáveis críticas:
 - **Plano de contas** padrão NBC TG com 5 grupos hierárquicos
 - **Somente lançamentos approved** entram nos cálculos
 
-## Fases implementadas
+## Nexopus Copilot
+
+Assistente de contabilidade brasileira com RAG (Retrieval-Augmented Generation) simples.
+
+### Base de Conhecimento
+
+Conteúdo coberto:
+- Lei nº 6.404/1976 (Lei das S.A.) — estrutura do Balanço e DRE
+- NBC TG 26 — Apresentação das Demonstrações Contábeis
+- Partida Dobrada e Equação Patrimonial
+- Plano de Contas Padrão NBC TG
+- IRPJ e CSLL (impostos sobre lucro)
+- Glossário contábil
+
+### Uso
+
+**API:**
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"question": "O que é DRE?"}'
+```
+
+**Frontend:**
+- Botão flutuante no canto inferior direito
+- Chat com histórico de mensagens
+- Exibição de fontes relevantes da base de conhecimento
+
+### Fases implementadas
 
 ### Fase 1 — Estabilização técnica ✅
 - Saneamento do worker (sem duplicatas)
