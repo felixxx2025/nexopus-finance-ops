@@ -48,11 +48,15 @@ cp .env.example .env
 # 2. Subir toda a stack
 docker compose up --build
 
-# Serviços disponíveis:
+# Serviços disponíveis (apenas expostos):
 # → API:       http://localhost:8000/docs
 # → Frontend:  http://localhost:3000
-# → MinIO:     http://localhost:9001
-# → RabbitMQ:  http://localhost:15672
+# → MinIO Console (debug): http://localhost:9001
+# → RabbitMQ Management (debug): http://localhost:15672
+#
+# Serviços internos (sem exposição externa):
+# → postgres, redis, prometheus, grafana, loki, jaeger, flower
+#   acessíveis apenas via rede Docker nexopus-internal
 ```
 
 ## Início rápido (local)
