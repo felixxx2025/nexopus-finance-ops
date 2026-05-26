@@ -33,11 +33,10 @@ function NavBar() {
         <Link
           key={l.href}
           href={l.href}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${
-            router.pathname === l.href
-              ? "bg-indigo-600 text-white"
-              : "text-gray-300 hover:bg-gray-800 hover:text-white"
-          }`}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg whitespace-nowrap transition-colors ${router.pathname === l.href
+            ? "bg-indigo-600 text-white"
+            : "text-gray-300 hover:bg-gray-800 hover:text-white"
+            }`}
         >
           <span>{l.icon}</span>
           <span className="hidden md:inline">{l.label}</span>
@@ -64,6 +63,7 @@ export default function App({ Component, pageProps }: AppProps) {
         <main>
           <Component {...pageProps} />
         </main>
+        <ChatCopilot />
       </div>
     </AuthProvider>
   );

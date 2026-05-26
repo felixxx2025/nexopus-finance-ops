@@ -11,12 +11,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY apps/api/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Código da API, services, packages e migrações
+# Código da API, services, packages, migrações e base de conhecimento
 COPY apps/api /app
 COPY services /app/services
 COPY packages /app/packages
 COPY alembic /app/alembic
 COPY alembic.ini /app/alembic.ini
+COPY docs/knowledge_base /app/docs/knowledge_base
 
 ENV PYTHONPATH=/app
 

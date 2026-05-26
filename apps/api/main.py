@@ -1007,6 +1007,94 @@ async def websocket_notifications(websocket: WebSocket):
         ws_manager.disconnect(websocket, username)
 
 
+# ── Chat / Copilot (RAG simples) ──────────────────────────────────────────────
+
+class ChatRequest(BaseModel):
+    question: str
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    sources: list[str]
+
+
+_KNOWLEDGE_BASE_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "..", "docs", "knowledge_base", "contabilidade_brasileira.md"
+)
+
+
+def _load_knowledge_base() -> str:
+    """Carrega a base de conhecimento contábil do arquivo markdown."""
+    try:
+        with open(_KNOWLEDGE_BASE_PATH, encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        logger.warning("Base de conhecimento não encontrada em %s", _KNOWLEDGE_BASE_PATH)
+        return ""
+
+
+_KNOWLEDGE_CACHE = _load_knowledge_base()
+
+
+def _rag_search(question: str, knowledge: str) -> tuple[str, list[str]]:
+    """
+    Busca simples por palavras-chave na base de conhecimento.
+    Retorna (resposta, trechos relevantes).
+    """
+    if not knowledge:
+        return "Base de conhecimento indisponível.", []
+
+    question_lower = question.lower()
+    keywords = question_lower.split()
+    relevant_sections = []
+
+    lines = knowledge.split("\n")
+    current_section = ""
+    current_lines = []
+
+    for line in lines:
+        if line.startswith("#"):
+            if current_lines and any(kw in " ".join(current_lines).lower() for kw in keywords):
+                relevant_sections.append("\n".join(current_lines))
+            current_section = line
+            current_lines = [line]
+        else:
+            current_lines.append(line)
+
+    if current_lines and any(kw in " ".join(current_lines).lower() for kw in keywords):
+        relevant_sections.append("\n".join(current_lines))
+
+    if not relevant_sections:
+        return (
+            "Não encontrei informações específicas sobre isso na base de conhecimento. "
+            "Tente perguntar sobre DRE, Balanço Patrimonial, Lei 6404, NBC TG, Partida Dobrada, "
+            "Plano de Contas, IRPJ, CSLL ou Equação Patrimonial.",
+            [],
+        )
+
+    context = "\n\n".join(relevant_sections[:3])
+    answer = f"Com base na documentação contábil:\n\n{context}"
+    return answer, relevant_sections[:3]
+
+
+@app.post("/chat", tags=["chat"], response_model=ChatResponse)
+async def chat_copilot(body: ChatRequest) -> ChatResponse:
+    """
+    Nexopus Copilot — assistente de contabilidade brasileira com RAG simples.
+
+    Responde perguntas sobre:
+    - Lei 6.404/1976 (Lei das S.A.)
+    - NBC TG 26 (Apresentação das Demonstrações Contábeis)
+    - DRE (Demonstração do Resultado)
+    - Balanço Patrimonial
+    - Partida Dobrada
+    - Plano de Contas
+    - IRPJ e CSLL
+    """
+    answer, sources = _rag_search(body.question, _KNOWLEDGE_CACHE)
+    return ChatResponse(answer=answer, sources=sources)
+
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 @app.on_event("startup")
