@@ -11,15 +11,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY apps/api/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Código da API, services e packages
+# Código da API, services, packages e migrações
 COPY apps/api /app
 COPY services /app/services
 COPY packages /app/packages
+COPY alembic /app/alembic
+COPY alembic.ini /app/alembic.ini
 
 ENV PYTHONPATH=/app
+
+# Entrypoint: roda migrações e depois inicia a API
+COPY infra/docker/entrypoint-api.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # Executa como usuário não-root
 USER app
 
 EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/entrypoint.sh"]
