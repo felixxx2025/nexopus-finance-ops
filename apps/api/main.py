@@ -385,6 +385,92 @@ def _upload_to_s3(key: str, contents: bytes, content_type: str) -> str:
     return f"{settings.s3_bucket}/{key}"
 
 
+# ── Companies / Onboarding ───────────────────────────────────────────────────
+
+class CompanyCreate(BaseModel):
+    name: str
+    cnpj: str
+
+
+@app.post("/companies", tags=["companies"], status_code=201)
+async def create_company(
+    body: CompanyCreate,
+    current_user: dict = Depends(require_role(["admin"])),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Cria uma empresa e semeia o plano de contas padrão NBC TG automaticamente.
+    Apenas admin.
+    """
+    from sqlalchemy import select  # noqa: PLC0415
+    from packages.db.models import Company  # noqa: PLC0415
+    from services.accounting_core.engine import AccountingEngine  # noqa: PLC0415
+    from services.compliance.rules import validate_cnpj  # noqa: PLC0415
+
+    cnpj_clean = body.cnpj.replace(".", "").replace("/", "").replace("-", "")
+    if not validate_cnpj(cnpj_clean):
+        raise HTTPException(status_code=422, detail="CNPJ inválido.")
+
+    # Verifica duplicidade
+    existing = await db.execute(select(Company).where(Company.cnpj == cnpj_clean))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="CNPJ já cadastrado.")
+
+    company = Company(name=body.name, cnpj=cnpj_clean)
+    db.add(company)
+    await db.commit()
+    await db.refresh(company)
+
+    # Seed plano de contas
+    engine = AccountingEngine(db)
+    seeded = await engine.seed_plano_de_contas(str(company.id))
+
+    await _audit(
+        db, "company_created", current_user["sub"],
+        entity_type="company", entity_id=str(company.id),
+        metadata={"name": body.name, "cnpj": cnpj_clean, "contas_semeadas": seeded},
+    )
+
+    return {
+        "id": str(company.id),
+        "name": company.name,
+        "cnpj": company.cnpj,
+        "contas_semeadas": seeded,
+    }
+
+
+@app.get("/companies", tags=["companies"])
+async def list_companies(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Lista todas as empresas."""
+    from sqlalchemy import select  # noqa: PLC0415
+    from packages.db.models import Company  # noqa: PLC0415
+
+    result = await db.execute(select(Company).order_by(Company.name))
+    companies = result.scalars().all()
+    return {
+        "companies": [
+            {"id": str(c.id), "name": c.name, "cnpj": c.cnpj, "created_at": c.created_at.isoformat()}
+            for c in companies
+        ]
+    }
+
+
+@app.post("/companies/{company_id}/seed-accounts", tags=["companies"])
+async def seed_accounts(
+    company_id: uuid.UUID,
+    current_user: dict = Depends(require_role(["admin"])),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Semeia plano de contas padrão se a empresa não tiver contas."""
+    from services.accounting_core.engine import AccountingEngine  # noqa: PLC0415
+    engine = AccountingEngine(db)
+    seeded = await engine.seed_plano_de_contas(str(company_id))
+    return {"company_id": str(company_id), "contas_semeadas": seeded}
+
+
 # ── Documents ─────────────────────────────────────────────────────────────────
 
 MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
@@ -926,9 +1012,8 @@ async def websocket_notifications(websocket: WebSocket):
 @app.on_event("startup")
 async def startup_event():
     try:
-        from apps.api.observability import setup_sentry, setup_prometheus  # noqa: PLC0415
-        setup_sentry(settings.sentry_dsn, settings.environment)
-        setup_prometheus(app)
+        from apps.api.observability import setup_all  # noqa: PLC0415
+        setup_all(app, settings)
     except Exception as e:
         logger.warning("Observabilidade parcialmente inicializada: %s", e)
     logger.info("Nexopus Finance API v%s iniciada (env=%s).", _API_VERSION, settings.environment)

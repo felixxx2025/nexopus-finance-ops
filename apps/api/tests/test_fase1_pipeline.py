@@ -135,7 +135,7 @@ async def test_engine_dre_structure():
     from services.accounting_core.engine import AccountingEngine
 
     acc_id = uuid.uuid4()
-    rows = [(acc_id, "Receita de Serviços", "receita", "credit", Decimal("120000"))]
+    rows = [(acc_id, "Receita de Serviços", "receita", "4.2", "credit", Decimal("120000"))]
     session = MagicMock()
     result = MagicMock()
     result.all.return_value = rows
@@ -158,9 +158,9 @@ async def test_engine_balance_equacao_fecha():
     from services.accounting_core.engine import AccountingEngine
 
     rows = [
-        (uuid.uuid4(), "Caixa",          "ativo",   "debit",  Decimal("100000")),
-        (uuid.uuid4(), "Fornecedores",   "passivo",  "credit", Decimal("60000")),
-        (uuid.uuid4(), "Capital Social", "pl",       "credit", Decimal("40000")),
+        (uuid.uuid4(), "Caixa",          "ativo",   "1.1.01", "debit",  Decimal("100000")),
+        (uuid.uuid4(), "Fornecedores",   "passivo",  "2.1.01", "credit", Decimal("60000")),
+        (uuid.uuid4(), "Capital Social", "pl",       "3.1",    "credit", Decimal("40000")),
     ]
     session = MagicMock()
     result = MagicMock()

@@ -145,21 +145,33 @@ def _extract_text(file_path: str) -> str:
     raise ValueError(f"Tipo de arquivo não suportado: {ext}")
 
 
-def parse_document(file_path: str) -> dict[str, Any]:
+def parse_document(
+    file_path: str,
+    doc_id: str | None = None,
+    company_id: str | None = None,
+) -> dict[str, Any]:
     """
     Extrai texto do documento e usa o LLaMA 405B para estruturar os dados.
 
+    Integra AIController para fallback automático quando confiança < threshold.
+
     Args:
         file_path: Caminho local do arquivo PDF/txt/xlsx.
+        doc_id: UUID do documento (para log de decisão).
+        company_id: UUID da empresa (para log de decisão).
 
     Returns:
-        Dicionário estruturado com empresa, periodo e lancamentos.
+        Dicionário estruturado com empresa, periodo, lancamentos e _ai_control.
 
     Raises:
         FileNotFoundError: Se o arquivo não existir.
         ValueError: Se o documento não contiver texto extraível ou JSON inválido.
         RuntimeError: Se a API GitHub AI falhar após retries.
     """
+    from services.ai_engine.ai_control import (  # noqa: PLC0415
+        AIController, FALLBACK_PARSE_RESULT,
+    )
+
     raw_text = _extract_text(file_path)
     logger.info("parse_document | arquivo=%s | chars=%d", file_path, len(raw_text))
 
@@ -174,21 +186,39 @@ def parse_document(file_path: str) -> dict[str, Any]:
         },
     ]
 
-    raw_response = chat_completion(
-        messages,
-        model=MODELS["parser"],
-        max_tokens=2048,
-        temperature=0.0,
-        endpoint=AZURE_CHAT_URL,
-        response_format={"type": "json_object"},
+    try:
+        raw_response = chat_completion(
+            messages,
+            model=MODELS["parser"],
+            max_tokens=2048,
+            temperature=0.0,
+            endpoint=AZURE_CHAT_URL,
+            response_format={"type": "json_object"},
+        )
+        structured = _extract_json(raw_response)
+        validated = _validate_structure(structured)
+        confidence = float(validated.get("confianca", 0.0))
+    except Exception as exc:
+        logger.error("parse_document falhou: %s — usando fallback", exc)
+        validated = dict(FALLBACK_PARSE_RESULT)
+        confidence = 0.0
+
+    ctrl = AIController(agent="parser", operation="parse_document")
+    eval_result = ctrl.with_fallback(
+        confidence=confidence,
+        ai_result=validated,
+        fallback_result=dict(FALLBACK_PARSE_RESULT),
+        doc_id=doc_id,
+        company_id=company_id,
     )
 
-    structured = _extract_json(raw_response)
-    validated = _validate_structure(structured)
+    result = eval_result.result
+    result["_ai_control"] = eval_result.to_dict()
 
     logger.info(
-        "parse_document concluído | lancamentos=%d | confianca=%.2f",
-        len(validated["lancamentos"]),
-        validated.get("confianca", 0),
+        "parse_document concluído | lancamentos=%d | confianca=%.2f | decision=%s",
+        len(result.get("lancamentos", [])),
+        confidence,
+        eval_result.decision.value,
     )
-    return validated
+    return result

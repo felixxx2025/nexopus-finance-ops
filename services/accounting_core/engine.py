@@ -29,6 +29,51 @@ _DEVEDORAS = {"ativo", "despesa"}
 # Contas com natureza credora (saldo normal a crédito)
 _CREDORAS = {"passivo", "receita", "pl"}
 
+# Plano de contas padrão NBC TG — usado para seed inicial
+PLANO_CONTAS_PADRAO: list[dict] = [
+    # ATIVO
+    {"code": "1",        "name": "ATIVO",                        "type": "ativo"},
+    {"code": "1.1",      "name": "Ativo Circulante",              "type": "ativo"},
+    {"code": "1.1.01",   "name": "Caixa e Equivalentes",          "type": "ativo"},
+    {"code": "1.1.02",   "name": "Contas a Receber",              "type": "ativo"},
+    {"code": "1.1.03",   "name": "Estoques",                      "type": "ativo"},
+    {"code": "1.1.04",   "name": "Outros Ativos Circulantes",     "type": "ativo"},
+    {"code": "1.2",      "name": "Ativo Não Circulante",          "type": "ativo"},
+    {"code": "1.2.01",   "name": "Imobilizado",                   "type": "ativo"},
+    {"code": "1.2.02",   "name": "Intangível",                    "type": "ativo"},
+    {"code": "1.2.03",   "name": "Investimentos",                 "type": "ativo"},
+    # PASSIVO
+    {"code": "2",        "name": "PASSIVO",                       "type": "passivo"},
+    {"code": "2.1",      "name": "Passivo Circulante",            "type": "passivo"},
+    {"code": "2.1.01",   "name": "Fornecedores",                  "type": "passivo"},
+    {"code": "2.1.02",   "name": "Salários e Encargos a Pagar",   "type": "passivo"},
+    {"code": "2.1.03",   "name": "Obrigações Fiscais",             "type": "passivo"},
+    {"code": "2.1.04",   "name": "Empréstimos CP",                "type": "passivo"},
+    {"code": "2.2",      "name": "Passivo Não Circulante",        "type": "passivo"},
+    {"code": "2.2.01",   "name": "Empréstimos LP",                "type": "passivo"},
+    {"code": "2.2.02",   "name": "Debêntures",                    "type": "passivo"},
+    # PL
+    {"code": "3",        "name": "PATRIMÔNIO LÍQUIDO",            "type": "pl"},
+    {"code": "3.1",      "name": "Capital Social",                "type": "pl"},
+    {"code": "3.2",      "name": "Reservas de Capital",           "type": "pl"},
+    {"code": "3.3",      "name": "Lucros/Prejuízos Acumulados",   "type": "pl"},
+    # RECEITA
+    {"code": "4",        "name": "RECEITAS",                      "type": "receita"},
+    {"code": "4.1",      "name": "Receita Bruta de Vendas",       "type": "receita"},
+    {"code": "4.2",      "name": "Receita de Serviços",           "type": "receita"},
+    {"code": "4.3",      "name": "Receitas Financeiras",          "type": "receita"},
+    {"code": "4.4",      "name": "Outras Receitas Operacionais",  "type": "receita"},
+    # DESPESA
+    {"code": "5",        "name": "DESPESAS",                      "type": "despesa"},
+    {"code": "5.1",      "name": "Custo dos Produtos Vendidos",   "type": "despesa"},
+    {"code": "5.2",      "name": "Despesas com Pessoal",          "type": "despesa"},
+    {"code": "5.3",      "name": "Despesas Administrativas",      "type": "despesa"},
+    {"code": "5.4",      "name": "Despesas Comerciais",           "type": "despesa"},
+    {"code": "5.5",      "name": "Despesas Financeiras",          "type": "despesa"},
+    {"code": "5.6",      "name": "Depreciação e Amortização",     "type": "despesa"},
+    {"code": "5.7",      "name": "Impostos e Taxas",              "type": "despesa"},
+]
+
 
 class AccountingEngine:
     """
@@ -66,6 +111,7 @@ class AccountingEngine:
                 JournalItem.account_id,
                 Account.name.label("account_name"),
                 Account.type.label("account_type"),
+                Account.code.label("account_code"),
                 JournalItem.type.label("item_type"),
                 func.sum(JournalItem.amount).label("total"),
             )
@@ -73,10 +119,12 @@ class AccountingEngine:
             .join(Account, JournalItem.account_id == Account.id)
             .where(JournalEntry.company_id == company_uuid)
             .where(func.extract("year", JournalEntry.date) == year)
+            .where(JournalEntry.status == "approved")  # somente lançamentos aprovados
             .group_by(
                 JournalItem.account_id,
                 Account.name,
                 Account.type,
+                Account.code,
                 JournalItem.type,
             )
         )
@@ -85,20 +133,19 @@ class AccountingEngine:
         rows = result.all()
 
         balances: dict[str, dict[str, Any]] = {}
-        for account_id, account_name, account_type, item_type, total in rows:
+        for account_id, account_name, account_type, account_code, item_type, total in rows:
             key = str(account_id)
             if key not in balances:
                 balances[key] = {
                     "name": account_name,
                     "type": account_type,
+                    "code": account_code or "",
                     "balance": Decimal("0"),
                 }
             amount = Decimal(str(total))
             if account_type in _DEVEDORAS:
-                # Natureza devedora: débito aumenta, crédito diminui
                 balances[key]["balance"] += amount if item_type == "debit" else -amount
             else:
-                # Natureza credora: crédito aumenta, débito diminui
                 balances[key]["balance"] += amount if item_type == "credit" else -amount
 
         return balances
@@ -141,6 +188,16 @@ class AccountingEngine:
         )
         lucro_liquido = lucro_antes_ir + ir_csll
 
+        # Breakdown por conta
+        receitas_detalhe = {
+            info["name"]: float(info["balance"])
+            for info in balances.values() if info["type"] == "receita" and info["balance"] > 0
+        }
+        despesas_detalhe = {
+            info["name"]: float(info["balance"])
+            for info in balances.values() if info["type"] == "despesa" and info["balance"] > 0
+        }
+
         return {
             "receita_bruta": float(receita_total),
             "deducoes": float(deducoes),
@@ -153,10 +210,14 @@ class AccountingEngine:
             "lucro_antes_ir": float(lucro_antes_ir),
             "ir_csll": float(ir_csll),
             "lucro_liquido": float(lucro_liquido),
+            "receitas_detalhe": receitas_detalhe,
+            "despesas_detalhe": despesas_detalhe,
             "_meta": {
                 "company_id": company_id,
                 "year": year,
                 "total_contas": len(balances),
+                "metodo": "NBC TG 26",
+                "apenas_aprovados": True,
             },
         }
 
@@ -197,6 +258,8 @@ class AccountingEngine:
 
         equacao_fecha = total_ativo == (total_passivo + total_pl)
 
+        diferenca = total_ativo - (total_passivo + total_pl)
+
         return {
             "ativo": ativo,
             "passivo": passivo,
@@ -210,7 +273,43 @@ class AccountingEngine:
             "_meta": {
                 "company_id": company_id,
                 "year": year,
-                "diferenca": float(total_ativo - (total_passivo + total_pl)),
+                "diferenca": float(diferenca),
+                "lei_ref": "Lei 6.404/1976",
+                "apenas_aprovados": True,
             },
         }
+
+    async def seed_plano_de_contas(self, company_id: str) -> int:
+        """
+        Insere o plano de contas padrão NBC TG para a empresa, se ainda não existir.
+
+        Returns:
+            Número de contas inseridas (0 se já existiam).
+        """
+        try:
+            company_uuid = uuid_mod.UUID(company_id)
+        except ValueError as exc:
+            raise ValueError(f"company_id inválido: {company_id}") from exc
+
+        # Verifica se já há contas
+        existing = await self.db.execute(
+            select(func.count(Account.id)).where(Account.company_id == company_uuid)
+        )
+        count = existing.scalar_one()
+        if count > 0:
+            return 0
+
+        inserted = 0
+        for item in PLANO_CONTAS_PADRAO:
+            acc = Account(
+                company_id=company_uuid,
+                code=item["code"],
+                name=item["name"],
+                type=item["type"],
+            )
+            self.db.add(acc)
+            inserted += 1
+
+        await self.db.commit()
+        return inserted
 

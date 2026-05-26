@@ -1,31 +1,33 @@
 # Nexopus Finance Ops
 
-Plataforma de contabilidade inteligente com geração automática de DRE, Balanço Patrimonial e relatórios financeiros via IA (OpenAI GPT-4o-mini).
+Plataforma de contabilidade inteligente para PMEs brasileiras: geração automática de DRE, Balanço Patrimonial e relatórios financeiros com IA, RBAC, trilha de auditoria e fluxo de revisão humana.
 
 ## Stack
 
-| Camada   | Tecnologia                             |
-| -------- | -------------------------------------- |
-| Frontend | Next.js 14 + Tailwind CSS + TypeScript |
-| Backend  | FastAPI + SQLAlchemy Async             |
-| Auth     | JWT Bearer (python-jose)               |
-| Banco    | PostgreSQL 16 + SQLAlchemy ORM         |
-| Cache    | Redis 7                                |
-| Fila     | Celery 5 + RabbitMQ                    |
-| IA       | OpenAI GPT-4o-mini                     |
-| Storage  | MinIO (S3-compatible)                  |
-| Testes   | pytest + pytest-asyncio                |
-| CI/CD    | GitHub Actions                         |
+| Camada          | Tecnologia                                          |
+| --------------- | --------------------------------------------------- |
+| Frontend        | Next.js 14 + Tailwind CSS + TypeScript              |
+| Backend         | FastAPI 0.115 + SQLAlchemy Async (asyncpg)          |
+| Auth            | JWT Bearer + httpOnly cookie + Redis blacklist      |
+| RBAC            | Roles: admin / analista / viewer                    |
+| Banco           | PostgreSQL 16 + Alembic migrations                  |
+| Cache           | Redis 7 (rate limiting + token blacklist)           |
+| Fila            | Celery 5 + RabbitMQ                                 |
+| IA              | Meta-Llama-3.1-405B via Azure Inference             |
+| Storage         | MinIO (S3-compatible)                               |
+| Observabilidade | Prometheus + Grafana + Loki + Sentry + OTLP         |
+| Testes          | pytest + pytest-asyncio (93 testes · 100% passing)  |
+| CI/CD           | GitHub Actions                                      |
 
 ## Estrutura
 
 ```
 apps/
-  api/          → FastAPI: auth, upload, reports
-  web/          → Next.js: login, dashboard, upload, reports
+  api/          → FastAPI: auth, RBAC, upload, reports, audit, AI endpoints
+  web/          → Next.js: login, dashboard, upload, reports, review, onboarding
 services/
-  accounting_core/  → AccountingEngine (DRE, Balanço)
-  ai_engine/        → agent_parser, agent_classifier, agent_generator
+  accounting_core/  → AccountingEngine (DRE NBC TG 26, Balanço Lei 6404)
+  ai_engine/        → agent_parser, classifier, generator + AIController (fallback/confiança)
   compliance/       → validate_balance, validate_double_entry, validate_cnpj
   parser/           → pdf_parser (pdfplumber)
   worker/           → Celery tasks (process_document, generate_report)
@@ -82,63 +84,147 @@ Use o `access_token` retornado como `Authorization: Bearer <token>` em todas as 
 
 ## Endpoints principais
 
-| Método | Endpoint                               | Descrição             |
-| ------ | -------------------------------------- | --------------------- |
-| `GET`  | `/health`                              | Health check          |
-| `POST` | `/auth/token`                          | Login → retorna JWT   |
-| `POST` | `/documents/upload`                    | Upload PDF/Excel/SPED |
-| `GET`  | `/reports/dre/{company_id}/{year}`     | DRE do exercício      |
-| `GET`  | `/reports/balance/{company_id}/{year}` | Balanço Patrimonial   |
+### Auth
+| Método  | Endpoint          | Role  | Descrição                        |
+| ------- | ----------------- | ----- | -------------------------------- |
+| `POST`  | `/auth/token`     | —     | Login → JWT + cookie httpOnly    |
+| `POST`  | `/auth/logout`    | any   | Invalida token (Redis blacklist) |
+| `GET`   | `/auth/me`        | any   | Dados do usuário corrente        |
+
+### Documentos
+| Método  | Endpoint                     | Role              | Descrição                      |
+| ------- | ---------------------------- | ----------------- | ------------------------------ |
+| `POST`  | `/documents/upload`          | admin / analista  | Upload PDF/XLSX (magic bytes)  |
+| `GET`   | `/documents`                 | any               | Lista documentos da empresa    |
+
+### Lançamentos
+| Método  | Endpoint                     | Role              | Descrição                      |
+| ------- | ---------------------------- | ----------------- | ------------------------------ |
+| `GET`   | `/entries/pending`           | any               | Lançamentos pendentes de revisão |
+| `PATCH` | `/entries/{id}/review`       | admin / analista  | Aprovar ou rejeitar lançamento |
+
+### Relatórios
+| Método  | Endpoint                             | Role   | Descrição           |
+| ------- | ------------------------------------ | ------ | ------------------- |
+| `GET`   | `/reports/dre/{company_id}/{year}`   | any    | DRE (NBC TG 26)     |
+| `GET`   | `/reports/balance/{company_id}/{year}` | any  | Balanço (Lei 6404)  |
+| `PATCH` | `/reports/{id}/approve`              | admin  | Aprovar relatório   |
+
+### Empresas / Onboarding
+| Método  | Endpoint                                | Role  | Descrição                           |
+| ------- | --------------------------------------- | ----- | ----------------------------------- |
+| `POST`  | `/companies`                            | admin | Cria empresa + seed plano de contas |
+| `GET`   | `/companies`                            | any   | Lista empresas                      |
+| `POST`  | `/companies/{id}/seed-accounts`         | admin | Semeia plano de contas NBC TG       |
+
+### Admin
+| Método  | Endpoint             | Role  | Descrição                 |
+| ------- | -------------------- | ----- | ------------------------- |
+| `GET`   | `/admin/audit-logs`  | admin | Trilha completa de ações  |
+| `GET`   | `/admin/users`       | admin | Lista usuários            |
+
+### Infra
+| Método | Endpoint   | Descrição                        |
+| ------ | ---------- | -------------------------------- |
+| `GET`  | `/health`  | Health + versão                  |
+| `GET`  | `/ready`   | Readiness (DB + Redis)           |
+| `GET`  | `/metrics` | Prometheus metrics               |
+| `WS`   | `/ws/{u}`  | WebSocket notificações real-time |
 
 ## Pipeline de processamento de documentos
 
 ```
-Upload → MinIO (armazenamento) → Celery (fila)
-  → agent_parser (extração de texto)
-  → agent_classifier (classificação de contas via LLM)
-  → agent_generator (geração de lançamentos em partida dobrada)
-  → compliance (validate_double_entry)
-  → PostgreSQL (journal_entries + journal_items)
-  → documents.parsed = True
+POST /documents/upload?company_id=<uuid>
+  → validação magic bytes (PDF/XLSX)
+  → upload MinIO/S3
+  → Document.status = "uploaded" → DB
+  → Celery: process_document.delay(doc_id)
+
+Celery worker:
+  → Document.status = "processing"
+  → download do MinIO
+  → agent_parser (LLaMA 405B) + AIController (confiança + fallback)
+  → agent_classifier → agent_generator
+  → compliance: validate_double_entry
+  → _persist_entries (journal_entries + journal_items)
+  → Document.status = "processed" | "needs_review" | "failed"
+  → generate_report.delay(company_id, year, "dre")
+  → generate_report.delay(company_id, year, "balanco")
 ```
+
+## RBAC
+
+| Permissão         | admin | analista | viewer |
+| ----------------- | :---: | :------: | :----: |
+| read              | ✓     | ✓        | ✓      |
+| write / upload    | ✓     | ✓        | —      |
+| ai:run            | ✓     | ✓        | —      |
+| reports:generate  | ✓     | ✓        | —      |
+| admin:manage      | ✓     | —        | —      |
+| audit:read        | ✓     | ✓        | ✓      |
 
 ## Testes
 
 ```bash
 cd apps/api
-DATABASE_URL="postgresql+asyncpg://..." \
-SECRET_KEY="..." \
-ADMIN_USERNAME="admin" \
-ADMIN_PASSWORD="admin" \
-PYTHONPATH="../../" \
+# conftest.py seta env vars automaticamente
 python3 -m pytest -v
-# → 37 testes | auth, engine, compliance, health
+# → 93 testes | auth, engine, compliance, health, fase1, fase2, fase3
 ```
+
+Suítes:
+- `test_health.py` — health / versão / Swagger
+- `test_auth.py` — login, JWT, cookie, RBAC de rota
+- `test_compliance.py` — CNPJ, partida dobrada, equação patrimonial
+- `test_engine.py` — motor contábil (DRE, Balanço)
+- `test_fase1_pipeline.py` — upload, estados, magic bytes, RBAC
+- `test_fase2_security.py` — roles, logout, cookie, observabilidade
+- `test_fase3_engine_ai.py` — plano de contas, AIController, fallback
 
 ## Variáveis de ambiente
 
-Veja [.env.example](.env.example) para a lista completa. Variáveis críticas:
+Veja [.env.example](.env.example). Variáveis críticas:
 
-| Variável                            | Descrição                               |
-| ----------------------------------- | --------------------------------------- |
-| `SECRET_KEY`                        | Chave de assinatura JWT (mín. 32 chars) |
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Credenciais de acesso inicial           |
-| `DATABASE_URL`                      | PostgreSQL async URL                    |
-| `OPENAI_API_KEY`                    | Chave da API OpenAI                     |
-| `ALLOWED_ORIGINS`                   | Origins CORS permitidos                 |
+| Variável                            | Descrição                                 |
+| ----------------------------------- | ----------------------------------------- |
+| `SECRET_KEY`                        | Chave JWT (mín. 32 chars)                 |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Credenciais iniciais                      |
+| `DATABASE_URL`                      | PostgreSQL async URL (asyncpg)            |
+| `GITHUB_TOKEN`                      | Token para Azure AI Inference (LLaMA)     |
+| `REDIS_URL`                         | Redis (rate limiting + blacklist)         |
+| `S3_ENDPOINT` / `S3_ACCESS_KEY`     | MinIO/S3 credentials                      |
+| `SENTRY_DSN`                        | Sentry (opcional, produção)               |
+| `ALLOWED_ORIGINS`                   | CORS origins (vírgula-separados)          |
 
 ## Compliance contábil
 
-O motor implementa:
-
-- **Partida Dobrada** (Lei nº 6.404/1976): todo débito tem crédito correspondente
+- **Partida Dobrada** (Lei nº 6.404/1976)
 - **Equação Patrimonial**: Ativo = Passivo + PL
+- **DRE** conforme NBC TG 26: IR/CSLL 34% sobre lucro tributável
 - **Validação de CNPJ** (algoritmo RFB)
-- **Natureza das contas**: ativo/despesa = devedoras; passivo/receita/PL = credoras
+- **Plano de contas** padrão NBC TG com 5 grupos hierárquicos
+- **Somente lançamentos approved** entram nos cálculos
 
-## Roadmap MVP
+## Fases implementadas
 
-- **Semana 1** — Setup backend + DB + upload de arquivos
-- **Semana 2** — Parser PDF básico
-- **Semana 3** — Geração de DRE simples
-- **Semana 4** — UI mínima + export PDF
+### Fase 1 — Estabilização técnica ✅
+- Saneamento do worker (sem duplicatas)
+- Pipeline de documentos com estados (uploaded → processing → processed/failed/needs_review)
+- Configuração centralizada via `config.py` (pydantic-settings)
+- Migração Alembic `002` com novos campos
+
+### Fase 2 — Segurança e auditoria ✅
+- RBAC admin / analista / viewer em todos os endpoints
+- JWT blacklist via Redis no logout
+- Cookie httpOnly no login
+- `audit_logs` em todas as ações críticas
+- Fluxo de revisão humana (`/entries/{id}/review`)
+- Validação de magic bytes no upload
+- Logs estruturados JSON (Loki/Promtail) via `observability.py`
+
+### Fase 3 — Motor robusto e IA controlada ✅
+- Plano de contas NBC TG (35 contas, seed automático no onboarding)
+- Motor filtra somente `status='approved'`, com breakdown por conta
+- `AIController` com threshold de confiança, decisão auto/review/reject, fallback
+- `AIDecisionLog` auditável por operação
+- Telas frontend: onboarding de empresa, revisão de lançamentos

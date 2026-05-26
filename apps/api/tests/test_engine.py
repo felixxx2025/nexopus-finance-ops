@@ -45,7 +45,7 @@ async def test_calculate_balance_receita_credora():
     import uuid
     acc_id = uuid.uuid4()
     # (account_id, account_name, account_type, item_type, total)
-    rows = [(acc_id, "Receita de Vendas", "receita", "credit", Decimal("100000"))]
+    rows = [(acc_id, "Receita de Vendas", "receita", "4.1", "credit", Decimal("100000"))]
     db = _mock_db_session(rows)
     engine = AccountingEngine(db)
     result = await engine.calculate_balance(str(uuid.uuid4()), 2025)
@@ -59,7 +59,7 @@ async def test_calculate_balance_ativo_devedor():
     """Conta de ativo (natureza devedora): débito aumenta o saldo."""
     import uuid
     acc_id = uuid.uuid4()
-    rows = [(acc_id, "Caixa", "ativo", "debit", Decimal("50000"))]
+    rows = [(acc_id, "Caixa", "ativo", "1.1.01", "debit", Decimal("50000"))]
     db = _mock_db_session(rows)
     engine = AccountingEngine(db)
     result = await engine.calculate_balance(str(uuid.uuid4()), 2025)
@@ -84,8 +84,8 @@ async def test_generate_dre_structure():
     acc_receita = uuid.uuid4()
     acc_despesa = uuid.uuid4()
     rows = [
-        (acc_receita, "Receita de Serviços", "receita", "credit", Decimal("200000")),
-        (acc_despesa, "Despesas de Pessoal", "despesa",  "debit",  Decimal("80000")),
+        (acc_receita, "Receita de Serviços", "receita", "4.2", "credit", Decimal("200000")),
+        (acc_despesa, "Despesas de Pessoal", "despesa",  "5.2", "debit",  Decimal("80000")),
     ]
     db = _mock_db_session(rows)
     engine = AccountingEngine(db)
@@ -105,7 +105,7 @@ async def test_generate_dre_receita_bruta():
     """DRE deve capturar a receita bruta corretamente."""
     import uuid
     acc_id = uuid.uuid4()
-    rows = [(acc_id, "Receita de Vendas", "receita", "credit", Decimal("150000"))]
+    rows = [(acc_id, "Receita de Vendas", "receita", "4.1", "credit", Decimal("150000"))]
     db = _mock_db_session(rows)
     engine = AccountingEngine(db)
     dre = await engine.generate_dre(str(uuid.uuid4()), 2025)
@@ -157,9 +157,9 @@ async def test_balance_sheet_equacao_fecha_com_dados():
     acc_passivo = uuid.uuid4()
     acc_pl = uuid.uuid4()
     rows = [
-        (acc_ativo,  "Caixa",          "ativo",   "debit",  Decimal("100000")),
-        (acc_passivo,"Fornecedores",   "passivo",  "credit", Decimal("60000")),
-        (acc_pl,     "Capital Social", "pl",       "credit", Decimal("40000")),
+        (acc_ativo,  "Caixa",          "ativo",   "1.1.01", "debit",  Decimal("100000")),
+        (acc_passivo,"Fornecedores",   "passivo",  "2.1.01", "credit", Decimal("60000")),
+        (acc_pl,     "Capital Social", "pl",       "3.1",    "credit", Decimal("40000")),
     ]
     db = _mock_db_session(rows)
     engine = AccountingEngine(db)
