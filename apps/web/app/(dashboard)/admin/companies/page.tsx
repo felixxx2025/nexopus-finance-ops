@@ -17,6 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useCompany } from "@/contexts/CompanyContext";
 import { Building2, Edit, Loader2, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 
 const API_URL = "/api";
 
@@ -63,13 +64,13 @@ export default function AdminCompaniesPage() {
       refreshCompanies();
     } catch (err) {
       console.error("Error deleting company:", err);
-      alert(err instanceof Error ? err.message : "Erro ao excluir empresa");
+      toast.error(err instanceof Error ? err.message : "Erro ao excluir empresa");
     }
   };
 
   const handleCreateCompany = async () => {
     if (!newCompanyName.trim() || !newCompanyCNPJ.trim()) {
-      alert("Por favor, preencha todos os campos.");
+      toast.error("Por favor, preencha todos os campos.");
       return;
     }
 
@@ -95,9 +96,10 @@ export default function AdminCompaniesPage() {
       setNewCompanyCNPJ("");
       setShowCreateModal(false);
       refreshCompanies();
+      toast.success("Empresa criada com sucesso!");
     } catch (err) {
       console.error("Error creating company:", err);
-      alert(err instanceof Error ? err.message : "Erro ao criar empresa");
+      toast.error(err instanceof Error ? err.message : "Erro ao criar empresa");
     } finally {
       setIsCreating(false);
     }
@@ -105,7 +107,7 @@ export default function AdminCompaniesPage() {
 
   const handleEditCompany = async () => {
     if (!editingCompany || !newCompanyName.trim() || !newCompanyCNPJ.trim()) {
-      alert("Por favor, preencha todos os campos.");
+      toast.error("Por favor, preencha todos os campos.");
       return;
     }
 
@@ -132,9 +134,10 @@ export default function AdminCompaniesPage() {
       setEditingCompany(null);
       setShowEditModal(false);
       refreshCompanies();
+      toast.success("Empresa atualizada com sucesso!");
     } catch (err) {
       console.error("Error editing company:", err);
-      alert(err instanceof Error ? err.message : "Erro ao editar empresa");
+      toast.error(err instanceof Error ? err.message : "Erro ao editar empresa");
     } finally {
       setIsEditing(false);
     }

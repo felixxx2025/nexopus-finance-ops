@@ -116,7 +116,7 @@ def upgrade() -> None:
         sa.Column("entity_type", sa.String(50), nullable=True),
         sa.Column("entity_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("company_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("companies.id", ondelete="SET NULL"), nullable=True),
-        sa.Column("metadata", postgresql.JSONB(), nullable=False, server_default="'{}'"),
+        sa.Column("metadata", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'")),
         sa.Column("ip_address", sa.String(45), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
     )

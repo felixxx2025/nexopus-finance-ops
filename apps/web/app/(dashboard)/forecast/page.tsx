@@ -19,17 +19,6 @@ import {
   YAxis,
 } from "recharts";
 
-const DEMO_LANCAMENTOS = [
-  { data: "2026-01-15", tipo_conta: "receita", valor: 85000 },
-  { data: "2026-01-20", tipo_conta: "despesa", valor: 42000 },
-  { data: "2026-02-10", tipo_conta: "receita", valor: 91000 },
-  { data: "2026-02-25", tipo_conta: "despesa", valor: 45000 },
-  { data: "2026-03-05", tipo_conta: "receita", valor: 88000 },
-  { data: "2026-03-18", tipo_conta: "despesa", valor: 43000 },
-  { data: "2026-04-08", tipo_conta: "receita", valor: 94000 },
-  { data: "2026-04-22", tipo_conta: "despesa", valor: 47000 },
-];
-
 const RISK_COLORS: Record<string, string> = {
   baixo: "text-green-400",
   medio: "text-yellow-400",
@@ -93,18 +82,53 @@ interface ForecastResult {
 }
 
 export default function ForecastPage() {
+  const { selectedCompanyId, companies } = useCompany();
   const [loading, setLoading] = useState(false);
+  const [loadingEntries, setLoadingEntries] = useState(false);
   const [data, setData] = useState<ForecastResult | null>(null);
   const [error, setError] = useState("");
   const [scenario, setScenario] = useState<"otimista" | "base" | "pessimista">(
     "base",
   );
+  const [entries, setEntries] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (selectedCompanyId) {
+      loadEntries();
+    }
+  }, [selectedCompanyId]);
+
+  async function loadEntries() {
+    if (!selectedCompanyId) return;
+
+    try {
+      setLoadingEntries(true);
+      const result = await fetchApprovedEntries(selectedCompanyId);
+      setEntries(result.entries);
+    } catch (e) {
+      console.error("Error loading entries:", e);
+      setError(e instanceof Error ? e.message : "Erro ao carregar lançamentos.");
+    } finally {
+      setLoadingEntries(false);
+    }
+  }
 
   async function runForecast() {
+    if (!selectedCompanyId) {
+      setError("Selecione uma empresa para gerar o forecast.");
+      return;
+    }
+
+    if (entries.length === 0) {
+      setError("Não há lançamentos aprovados para gerar o forecast.");
+      return;
+    }
+
     setLoading(true);
     setError("");
     try {
-      const result = await fetchForecast(DEMO_LANCAMENTOS, "Empresa Demo");
+      const company = companies.find(c => c.id === selectedCompanyId);
+      const result = await fetchForecast(entries, company?.name || "Empresa");
       setData(result);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao gerar previsão.");

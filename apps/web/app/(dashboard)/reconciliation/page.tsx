@@ -4,56 +4,9 @@
  */
 "use client";
 
-import { fetchReconcile } from "@/lib/api";
-import { useState } from "react";
-
-const DEMO_BANK = [
-  { data: "2026-01-15", descricao: "TED Recebido Cliente ABC", valor: 85000 },
-  { data: "2026-01-20", descricao: "Débito Folha Jan", valor: 42000 },
-  { data: "2026-02-10", descricao: "TED Recebido Cliente XYZ", valor: 91000 },
-  { data: "2026-02-25", descricao: "Pagto Fornecedor Fev", valor: 45000 },
-  { data: "2026-03-05", descricao: "Pix Recebido Mar", valor: 88000 },
-  { data: "2026-03-18", descricao: "Débito Aluguel Mar", valor: 12000 },
-];
-
-const DEMO_CONTABIL = [
-  {
-    data: "2026-01-15",
-    descricao: "Receita Serviços - Cli ABC",
-    valor: 85000,
-    tipo_conta: "receita",
-  },
-  {
-    data: "2026-01-20",
-    descricao: "Folha Pagamento Jan",
-    valor: 42000,
-    tipo_conta: "despesa",
-  },
-  {
-    data: "2026-02-10",
-    descricao: "Receita Serv - XYZ",
-    valor: 91000,
-    tipo_conta: "receita",
-  },
-  {
-    data: "2026-02-25",
-    descricao: "Fornecedores Fev",
-    valor: 45000,
-    tipo_conta: "despesa",
-  },
-  {
-    data: "2026-03-05",
-    descricao: "Receita Março",
-    valor: 88000,
-    tipo_conta: "receita",
-  },
-  {
-    data: "2026-04-01",
-    descricao: "Compra Equipamento",
-    valor: 35000,
-    tipo_conta: "despesa",
-  },
-];
+import { useCompany } from "@/contexts/CompanyContext";
+import { fetchApprovedEntries, fetchReconcile } from "@/lib/api";
+import { useEffect, useState } from "react";
 
 const STATUS_STYLES: Record<string, { badge: string; row: string }> = {
   CONCILIADO: {
@@ -124,19 +77,68 @@ interface ReconciliationResult {
 }
 
 export default function ReconciliationPage() {
+  const { selectedCompanyId, companies } = useCompany();
   const [loading, setLoading] = useState(false);
+  const [loadingEntries, setLoadingEntries] = useState(false);
   const [data, setData] = useState<ReconciliationResult | null>(null);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("TODOS");
+  const [entries, setEntries] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (selectedCompanyId) {
+      loadEntries();
+    }
+  }, [selectedCompanyId]);
+
+  async function loadEntries() {
+    if (!selectedCompanyId) return;
+
+    try {
+      setLoadingEntries(true);
+      const result = await fetchApprovedEntries(selectedCompanyId);
+      setEntries(result.entries);
+    } catch (e) {
+      console.error("Error loading entries:", e);
+      setError(e instanceof Error ? e.message : "Erro ao carregar lançamentos.");
+    } finally {
+      setLoadingEntries(false);
+    }
+  }
 
   async function runReconcile() {
+    if (!selectedCompanyId) {
+      setError("Selecione uma empresa para executar a conciliação.");
+      return;
+    }
+
+    if (entries.length === 0) {
+      setError("Não há lançamentos aprovados para conciliar.");
+      return;
+    }
+
     setLoading(true);
     setError("");
     try {
+      const company = companies.find(c => c.id === selectedCompanyId);
+      // Converter lançamentos para formato esperado pelo backend
+      const bankEntries = entries.map(e => ({
+        data: e.date,
+        descricao: e.description,
+        valor: e.items.reduce((sum: number, item: any) => sum + (item.debit || 0) - (item.credit || 0), 0),
+      }));
+
+      const accountingEntries = entries.map(e => ({
+        data: e.date,
+        descricao: e.description,
+        valor: e.items.reduce((sum: number, item: any) => sum + (item.debit || 0) - (item.credit || 0), 0),
+        tipo_conta: e.items.some((i: any) => i.credit > 0) ? "receita" : "despesa",
+      }));
+
       const result = await fetchReconcile(
-        DEMO_BANK,
-        DEMO_CONTABIL,
-        "Empresa Demo",
+        bankEntries,
+        accountingEntries,
+        company?.name || "Empresa",
       );
       setData(result);
     } catch (e) {

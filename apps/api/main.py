@@ -392,6 +392,20 @@ class CompanyCreate(BaseModel):
     cnpj: str
 
 
+class UserCreate(BaseModel):
+    username: str
+    email: str
+    password: str
+    role: str = "viewer"
+
+
+class UserUpdate(BaseModel):
+    username: str | None = None
+    email: str | None = None
+    password: str | None = None
+    role: str | None = None
+
+
 @app.post("/companies", tags=["companies"], status_code=201)
 async def create_company(
     body: CompanyCreate,
@@ -437,6 +451,83 @@ async def create_company(
         "cnpj": company.cnpj,
         "contas_semeadas": seeded,
     }
+
+
+@app.patch("/companies/{company_id}", tags=["companies"])
+async def update_company(
+    company_id: uuid.UUID,
+    body: CompanyCreate,
+    current_user: dict = Depends(require_role(["admin"])),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Atualiza dados de uma empresa. Apenas admin."""
+    from sqlalchemy import select  # noqa: PLC0415
+    from packages.db.models import Company  # noqa: PLC0415
+    from services.compliance.rules import validate_cnpj  # noqa: PLC0415
+
+    stmt = select(Company).where(Company.id == company_id)
+    result = await db.execute(stmt)
+    company = result.scalar_one_or_none()
+
+    if not company:
+        raise HTTPException(status_code=404, detail="Empresa não encontrada")
+
+    cnpj_clean = body.cnpj.replace(".", "").replace("/", "").replace("-", "")
+    if not validate_cnpj(cnpj_clean):
+        raise HTTPException(status_code=422, detail="CNPJ inválido.")
+
+    # Verifica duplicidade (exceto a própria empresa)
+    existing = await db.execute(
+        select(Company).where(Company.cnpj == cnpj_clean, Company.id != company_id)
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="CNPJ já cadastrado.")
+
+    company.name = body.name
+    company.cnpj = cnpj_clean
+    await db.commit()
+    await db.refresh(company)
+
+    await _audit(
+        db, "company_updated", current_user["sub"],
+        entity_type="company", entity_id=str(company.id),
+        metadata={"name": body.name, "cnpj": cnpj_clean},
+    )
+
+    return {
+        "id": str(company.id),
+        "name": company.name,
+        "cnpj": company.cnpj,
+    }
+
+
+@app.delete("/companies/{company_id}", tags=["companies"])
+async def delete_company(
+    company_id: uuid.UUID,
+    current_user: dict = Depends(require_role(["admin"])),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Exclui uma empresa. Apenas admin."""
+    from sqlalchemy import select, delete  # noqa: PLC0415
+    from packages.db.models import Company  # noqa: PLC0415
+
+    stmt = select(Company).where(Company.id == company_id)
+    result = await db.execute(stmt)
+    company = result.scalar_one_or_none()
+
+    if not company:
+        raise HTTPException(status_code=404, detail="Empresa não encontrada")
+
+    await db.execute(delete(Company).where(Company.id == company_id))
+    await db.commit()
+
+    await _audit(
+        db, "company_deleted", current_user["sub"],
+        entity_type="company", entity_id=str(company_id),
+        metadata={"name": company.name, "cnpj": company.cnpj},
+    )
+
+    return {"message": "Empresa excluída com sucesso"}
 
 
 @app.get("/companies", tags=["companies"])
@@ -717,6 +808,172 @@ async def list_pending_entries(
     }
 
 
+@app.get("/entries/approved", tags=["entries"])
+async def list_approved_entries(
+    company_id: uuid.UUID,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Lista lançamentos aprovados para uso em auditoria e forecast."""
+    from sqlalchemy import select  # noqa: PLC0415
+    from packages.db.models import JournalEntry, JournalItem  # noqa: PLC0415
+
+    stmt = (
+        select(JournalEntry)
+        .where(JournalEntry.company_id == company_id)
+        .where(JournalEntry.status == "approved")
+        .order_by(JournalEntry.date.desc())
+    )
+    result = await db.execute(stmt)
+    entries = result.scalars().all()
+
+    entries_data = []
+    for e in entries:
+        # Buscar items do lançamento
+        items_stmt = select(JournalItem).where(JournalItem.entry_id == e.id)
+        items_result = await db.execute(items_stmt)
+        items = items_result.scalars().all()
+
+        entries_data.append({
+            "id": str(e.id),
+            "date": e.date.isoformat(),
+            "description": e.description,
+            "status": e.status,
+            "items": [
+                {
+                    "account": i.account,
+                    "debit": float(i.debit) if i.debit else 0,
+                    "credit": float(i.credit) if i.credit else 0,
+                }
+                for i in items
+            ],
+            "created_at": e.created_at.isoformat(),
+        })
+
+    return {"entries": entries_data}
+
+
+@app.get("/compliance", tags=["compliance"])
+async def get_compliance_status(
+    company_id: uuid.UUID,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Retorna status de compliance da empresa com base em lançamentos aprovados."""
+    from sqlalchemy import select  # noqa: PLC0415
+    from packages.db.models import JournalEntry, JournalItem, Company  # noqa: PLC0415
+    from services.compliance.rules import validate_cnpj  # noqa: PLC0415
+
+    # Buscar empresa
+    company_stmt = select(Company).where(Company.id == company_id)
+    company_result = await db.execute(company_stmt)
+    company = company_result.scalar_one_or_none()
+
+    if not company:
+        raise HTTPException(status_code=404, detail="Empresa não encontrada")
+
+    # Validar CNPJ
+    cnpj_valid = validate_cnpj(company.cnpj) if company.cnpj else False
+
+    # Buscar lançamentos aprovados
+    entries_stmt = (
+        select(JournalEntry)
+        .where(JournalEntry.company_id == company_id)
+        .where(JournalEntry.status == "approved")
+    )
+    entries_result = await db.execute(entries_stmt)
+    entries = entries_result.scalars().all()
+
+    # Validar partida dobrada em cada lançamento
+    double_entry_valid = True
+    double_entry_errors = []
+
+    for entry in entries:
+        items_stmt = select(JournalItem).where(JournalItem.entry_id == entry.id)
+        items_result = await db.execute(items_stmt)
+        items = items_result.scalars().all()
+
+        total_debit = sum(float(i.debit) if i.debit else 0 for i in items)
+        total_credit = sum(float(i.credit) if i.credit else 0 for i in items)
+
+        if abs(total_debit - total_credit) > 0.01:
+            double_entry_valid = False
+            double_entry_errors.append({
+                "entry_id": str(entry.id),
+                "date": entry.date.isoformat(),
+                "description": entry.description,
+                "debit": total_debit,
+                "credit": total_credit,
+            })
+
+    # Validar equação patrimonial (usando relatórios)
+    from datetime import datetime  # noqa: PLC0415
+    current_year = datetime.now().year
+
+    try:
+        dre_stmt = select(Report).where(
+            Report.company_id == company_id,
+            Report.year == current_year,
+            Report.type == "dre"
+        )
+        dre_result = await db.execute(dre_stmt)
+        dre = dre_result.scalar_one_or_none()
+
+        balance_stmt = select(Report).where(
+            Report.company_id == company_id,
+            Report.year == current_year,
+            Report.type == "balanco"
+        )
+        balance_result = await db.execute(balance_stmt)
+        balance = balance_result.scalar_one_or_none()
+
+        equation_valid = True
+        equation_errors = []
+
+        if balance and balance.data:
+            ativo = balance.data.get("ativo", 0)
+            passivo = balance.data.get("passivo", 0)
+            pl = balance.data.get("patrimonio_liquido", 0)
+
+            if abs(ativo - (passivo + pl)) > 0.01:
+                equation_valid = False
+                equation_errors.append({
+                    "type": "equacao_patrimonial",
+                    "ativo": ativo,
+                    "passivo": passivo,
+                    "pl": pl,
+                    "diferenca": ativo - (passivo + pl),
+                })
+    except Exception:
+        equation_valid = None
+        equation_errors = []
+
+    # Calcular score de compliance
+    compliance_items = [
+        {"id": "cnpj", "name": "Validação CNPJ", "status": "compliant" if cnpj_valid else "non-compliant", "description": "CNPJ válido" if cnpj_valid else "CNPJ inválido"},
+        {"id": "partida_dobrada", "name": "Partida Dobrada", "status": "compliant" if double_entry_valid else "non-compliant", "description": "Todos os lançamentos balanceados" if double_entry_valid else f"{len(double_entry_errors)} lançamentos desbalanceados"},
+    ]
+
+    if equation_valid is not None:
+        compliance_items.append({
+            "id": "equacao_patrimonial", "name": "Equação Patrimonial", "status": "compliant" if equation_valid else "non-compliant", "description": "Ativo = Passivo + PL" if equation_valid else "Balanço não fecha"
+        })
+
+    compliant_count = sum(1 for item in compliance_items if item["status"] == "compliant")
+    total_count = len(compliance_items)
+    compliance_score = int((compliant_count / total_count) * 100) if total_count > 0 else 0
+
+    return {
+        "score": compliance_score,
+        "items": compliance_items,
+        "errors": {
+            "cnpj": [] if cnpj_valid else ["CNPJ inválido"],
+            "partida_dobrada": double_entry_errors,
+            "equacao_patrimonial": equation_errors if equation_valid is not None else [],
+        }
+    }
+
+
 # ── Reports ───────────────────────────────────────────────────────────────────
 
 @app.get("/reports/dre/{company_id}/{year}", tags=["reports"])
@@ -844,13 +1101,14 @@ async def ai_assistant(
     request: Request,
     body: AssistantRequest,
     current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
-    """Assistente financeiro conversacional com streaming SSE."""
+    """Assistente financeiro conversacional com streaming SSE e RAG."""
     from services.ai_engine.agent_assistant import stream_answer  # noqa: PLC0415
 
     async def event_generator():
         try:
-            async for chunk in stream_answer(body.question, body.context, body.history):
+            async for chunk in stream_answer(body.question, body.context, body.history, db):
                 yield f"data: {chunk}\n\n"
         except Exception as e:
             logger.error("SSE stream error: %s", e)
@@ -921,10 +1179,159 @@ async def list_audit_logs(
 @app.get("/admin/users", tags=["admin"])
 async def list_users(current_user: dict = Depends(require_role(["admin"]))) -> dict:
     """Lista usuários configurados (apenas admin)."""
+    from sqlalchemy import select  # noqa: PLC0415
+    from packages.db.models import User  # noqa: PLC0415
+
+    db = AsyncSessionLocal()
+    try:
+        result = await db.execute(select(User).order_by(User.created_at.desc()))
+        users = result.scalars().all()
+        return {
+            "users": [
+                {
+                    "username": u.username,
+                    "email": u.email,
+                    "role": u.role,
+                    "is_active": u.is_active,
+                    "created_at": u.created_at.isoformat(),
+                }
+                for u in users
+            ]
+        }
+    finally:
+        await db.close()
+
+
+@app.post("/admin/users", tags=["admin"], status_code=201)
+async def create_user(
+    body: UserCreate,
+    current_user: dict = Depends(require_role(["admin"])),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Cria um novo usuário. Apenas admin."""
+    from sqlalchemy import select  # noqa: PLC0415
+    from packages.db.models import User  # noqa: PLC0415
+
+    # Verifica duplicidade de username
+    existing = await db.execute(select(User).where(User.username == body.username))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Username já existe")
+
+    # Verifica duplicidade de email
+    if body.email:
+        existing_email = await db.execute(select(User).where(User.email == body.email))
+        if existing_email.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail="Email já existe")
+
+    password_hash = pwd_context.hash(body.password)
+    user = User(
+        username=body.username,
+        email=body.email,
+        password_hash=password_hash,
+        role=body.role,
+        is_active=True,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    await _audit(
+        db, "user_created", current_user["sub"],
+        entity_type="user", entity_id=str(user.id),
+        metadata={"username": body.username, "role": body.role},
+    )
+
     return {
-        "message": "Use EXTRA_USERS_JSON env var para gerenciar usuários adicionais.",
-        "admin": settings.admin_username,
+        "username": user.username,
+        "email": user.email,
+        "role": user.role,
+        "is_active": user.is_active,
     }
+
+
+@app.patch("/admin/users/{username}", tags=["admin"])
+async def update_user(
+    username: str,
+    body: UserUpdate,
+    current_user: dict = Depends(require_role(["admin"])),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Atualiza um usuário. Apenas admin."""
+    from sqlalchemy import select  # noqa: PLC0415
+    from packages.db.models import User  # noqa: PLC0415
+
+    stmt = select(User).where(User.username == username)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
+    if body.username and body.username != user.username:
+        existing = await db.execute(select(User).where(User.username == body.username))
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail="Username já existe")
+        user.username = body.username
+
+    if body.email and body.email != user.email:
+        existing_email = await db.execute(select(User).where(User.email == body.email))
+        if existing_email.scalar_one_or_none():
+            raise HTTPException(status_code=409, detail="Email já existe")
+        user.email = body.email
+
+    if body.password:
+        user.password_hash = pwd_context.hash(body.password)
+
+    if body.role:
+        user.role = body.role
+
+    await db.commit()
+    await db.refresh(user)
+
+    await _audit(
+        db, "user_updated", current_user["sub"],
+        entity_type="user", entity_id=str(user.id),
+        metadata={"username": user.username, "role": user.role},
+    )
+
+    return {
+        "username": user.username,
+        "email": user.email,
+        "role": user.role,
+        "is_active": user.is_active,
+    }
+
+
+@app.patch("/admin/users/{username}/deactivate", tags=["admin"])
+async def deactivate_user(
+    username: str,
+    current_user: dict = Depends(require_role(["admin"])),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Desativa um usuário. Apenas admin."""
+    from sqlalchemy import select  # noqa: PLC0415
+    from packages.db.models import User  # noqa: PLC0415
+
+    stmt = select(User).where(User.username == username)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
+    if user.username == settings.admin_username:
+        raise HTTPException(status_code=403, detail="Não é possível desativar o admin principal")
+
+    user.is_active = False
+    await db.commit()
+
+    await _audit(
+        db, "user_deactivated", current_user["sub"],
+        entity_type="user", entity_id=str(user.id),
+        metadata={"username": user.username},
+    )
+
+    return {"message": "Usuário desativado com sucesso"}
 
 
 # ── WebSocket (notificações em tempo real — token via header/query, não path) ──
@@ -1095,6 +1502,129 @@ async def chat_copilot(body: ChatRequest) -> ChatResponse:
     return ChatResponse(answer=answer, sources=sources)
 
 
+# ── Knowledge Base API ─────────────────────────────────────────────────────────
+
+class KnowledgeSearchRequest(BaseModel):
+    query: str
+    category: Optional[str] = None
+    limit: int = 5
+
+
+@app.post("/knowledge/search", tags=["knowledge"])
+async def search_knowledge_api(
+    body: KnowledgeSearchRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Busca conhecimento contábil usando RAG (semântico + lexical)."""
+    from services.knowledge.rag_service import search_knowledge  # noqa: PLC0415
+
+    results = await search_knowledge(
+        db,
+        body.query,
+        category=body.category,
+        limit=body.limit,
+        min_similarity=0.6,
+    )
+    return {"results": results, "count": len(results)}
+
+
+@app.get("/knowledge/articles/{article_id}", tags=["knowledge"])
+async def get_knowledge_article(
+    article_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Recupera artigo completo por ID."""
+    from services.knowledge.rag_service import get_article_by_id  # noqa: PLC0415
+
+    article = await get_article_by_id(db, article_id)
+    if not article:
+        raise HTTPException(status_code=404, detail="Artigo não encontrado.")
+    return article
+
+
+@app.get("/knowledge/articles", tags=["knowledge"])
+async def list_knowledge_articles(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    category: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """Lista artigos de conhecimento com paginação."""
+    from services.knowledge.rag_service import list_articles  # noqa: PLC0415
+
+    articles = await list_articles(db, category=category, limit=limit, offset=offset)
+    return {"articles": articles, "count": len(articles)}
+
+
+@app.get("/templates/reports", tags=["knowledge"])
+async def list_report_templates(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    template_type: Optional[str] = None,
+    sector: Optional[str] = None,
+) -> dict:
+    """Lista templates de relatórios."""
+    from services.knowledge.template_service import get_report_template  # noqa: PLC0415
+
+    if template_type:
+        template = await get_report_template(db, template_type, sector)
+        if template:
+            return {"templates": [template], "count": 1}
+        return {"templates": [], "count": 0}
+
+    # Listar todos (implementação futura)
+    return {"templates": [], "count": 0, "message": "Use ?type=dre ou ?type=balanco para buscar específico"}
+
+
+@app.get("/templates/accounts", tags=["knowledge"])
+async def list_account_templates(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    sector: Optional[str] = None,
+) -> dict:
+    """Lista planos de contas por setor."""
+    from services.knowledge.template_service import get_account_template  # noqa: PLC0415
+
+    if sector:
+        template = await get_account_template(db, sector)
+        if template:
+            return {"templates": [template], "count": 1}
+        return {"templates": [], "count": 0}
+
+    return {
+        "templates": [],
+        "count": 0,
+        "message": "Use ?sector=servicos ou ?sector=comercio para buscar específico",
+    }
+
+
+@app.post("/admin/knowledge/seed", tags=["admin"])
+async def seed_knowledge_base(
+    current_user: dict = Depends(require_role(["admin"])),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Popula base de conhecimento com conteúdo inicial (apenas admin)."""
+    from services.knowledge.knowledge_seeder import seed_knowledge_base  # noqa: PLC0415
+    from services.knowledge.template_service import seed_templates  # noqa: PLC0415
+
+    stats_kb = await seed_knowledge_base(db)
+    stats_templates = await seed_templates(db)
+
+    await _audit(
+        db, "knowledge_seeded", current_user["sub"],
+        metadata={"knowledge_stats": stats_kb, "template_stats": stats_templates},
+    )
+
+    return {
+        "message": "Base de conhecimento populada com sucesso",
+        "knowledge": stats_kb,
+        "templates": stats_templates,
+    }
+
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 @app.on_event("startup")
@@ -1104,4 +1634,26 @@ async def startup_event():
         setup_all(app, settings)
     except Exception as e:
         logger.warning("Observabilidade parcialmente inicializada: %s", e)
+
+    # Auto-seed knowledge base se vazia (apenas em development)
+    if settings.environment == "development":
+        try:
+            from sqlalchemy import select  # noqa: PLC0415
+            from packages.db.models import KnowledgeArticle  # noqa: PLC0415
+
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(select(KnowledgeArticle).limit(1))
+                has_knowledge = result.scalar_one_or_none()
+
+                if not has_knowledge:
+                    logger.info("Base de conhecimento vazia, executando auto-seed (Sentence Transformers local)...")
+                    from services.knowledge.knowledge_seeder import seed_knowledge_base  # noqa: PLC0415
+                    from services.knowledge.template_service import seed_templates  # noqa: PLC0415
+
+                    kb_stats = await seed_knowledge_base(db)
+                    template_stats = await seed_templates(db)
+                    logger.info("Auto-seed concluído: KB=%s, Templates=%s", kb_stats, template_stats)
+        except Exception as e:
+            logger.warning("Auto-seed falhou: %s", e)
+
     logger.info("Nexopus Finance API v%s iniciada (env=%s).", _API_VERSION, settings.environment)

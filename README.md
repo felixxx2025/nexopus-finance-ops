@@ -265,3 +265,16 @@ curl -X POST http://localhost:8000/chat \
 - `AIController` com threshold de confiança, decisão auto/review/reject, fallback
 - `AIDecisionLog` auditável por operação
 - Telas frontend: onboarding de empresa, revisão de lançamentos
+
+### Fase 4 — Base de Conhecimento Contábil com RAG ✅
+- PostgreSQL + pgvector para embeddings e busca semântica
+- **Sentence Transformers (HuggingFace)** para embeddings locais - 100% gratuito, sem OpenAI
+- Modelo: paraphrase-multilingual-MiniLM-L12-v2 (384 dimensions, multilíngue)
+- Base de conhecimento com normas brasileiras (NBC TG, CPC, Lei 6.404/76)
+- Glossário contábil com 200+ termos
+- Templates de relatórios (DRE, Balanço) e planos de contas por setor
+- RAG híbrido (semântico + lexical) para contexto enriquecido no chat
+- Componente de chat flutuante reutilizável no frontend
+- Auto-seed no startup (development) - sem necessidade de API keys externas
+- Endpoint `/admin/knowledge/seed` para popular base inicial
+- Integração RAG no `agent_assistant.py` para respostas mais precisas

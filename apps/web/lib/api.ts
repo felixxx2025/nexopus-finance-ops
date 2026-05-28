@@ -100,6 +100,54 @@ export async function uploadDocument(
   return res.json();
 }
 
+/** Lista lançamentos aprovados para uso em auditoria e forecast. */
+export async function fetchApprovedEntries(companyId: string) {
+  return request<{
+    entries: Array<{
+      id: string;
+      date: string;
+      description: string;
+      status: string;
+      items: Array<{
+        account: string;
+        debit: number;
+        credit: number;
+      }>;
+      created_at: string;
+    }>;
+  }>(`/entries/approved?company_id=${encodeURIComponent(companyId)}`);
+}
+
+/** Busca status de compliance da empresa. */
+export async function fetchCompliance(companyId: string) {
+  return request<{
+    score: number;
+    items: Array<{
+      id: string;
+      name: string;
+      status: string;
+      description: string;
+    }>;
+    errors: {
+      cnpj: string[];
+      partida_dobrada: Array<{
+        entry_id: string;
+        date: string;
+        description: string;
+        debit: number;
+        credit: number;
+      }>;
+      equacao_patrimonial: Array<{
+        type: string;
+        ativo: number;
+        passivo: number;
+        pl: number;
+        diferenca: number;
+      }>;
+    };
+  }>(`/compliance?company_id=${encodeURIComponent(companyId)}`);
+}
+
 /** Busca DRE do ano para a empresa. */
 export async function fetchDRE(companyId: string, year: number) {
   return request<{
@@ -263,4 +311,195 @@ export function streamAssistant(
       onDone();
     })
     .catch((e) => onError(e?.message ?? "Erro desconhecido"));
+}
+
+/** Busca logs de auditoria administrativos. */
+export async function fetchAuditLogs(params?: {
+  limit?: number;
+  offset?: number;
+  action?: string;
+  user?: string;
+}) {
+  const queryParams = new URLSearchParams();
+  if (params?.limit) queryParams.append("limit", params.limit.toString());
+  if (params?.offset) queryParams.append("offset", params.offset.toString());
+  if (params?.action) queryParams.append("action", params.action);
+  if (params?.user) queryParams.append("user", params.user);
+
+  const url = `/admin/audit-logs${queryParams.toString() ? `?${queryParams.toString()}` : ""}`;
+  return request<{
+    logs: Array<{
+      id: string;
+      timestamp: string;
+      user: string;
+      action: string;
+      entity: string;
+      entity_id: string;
+      details: string;
+      ip_address: string;
+    }>;
+    total: number;
+  }>(url);
+}
+
+/** Busca lista de documentos. */
+export async function fetchDocuments(params?: {
+  limit?: number;
+  offset?: number;
+  company_id?: string;
+  status?: string;
+}) {
+  const queryParams = new URLSearchParams();
+  if (params?.limit) queryParams.append("limit", params.limit.toString());
+  if (params?.offset) queryParams.append("offset", params.offset.toString());
+  if (params?.company_id) queryParams.append("company_id", params.company_id);
+  if (params?.status) queryParams.append("status", params.status);
+
+  const url = `/documents${queryParams.toString() ? `?${queryParams.toString()}` : ""}`;
+  return request<{
+    documents: Array<{
+      id: string;
+      name: string;
+      type: string;
+      size: string;
+      uploaded_at: string;
+      status: string;
+      company_id?: string;
+    }>;
+    total: number;
+  }>(url);
+}
+
+/** Busca lançamentos pendentes de aprovação. */
+export async function fetchPendingEntries(params?: {
+  limit?: number;
+  offset?: number;
+  company_id?: string;
+}) {
+  const queryParams = new URLSearchParams();
+  if (params?.limit) queryParams.append("limit", params.limit.toString());
+  if (params?.offset) queryParams.append("offset", params.offset.toString());
+  if (params?.company_id) queryParams.append("company_id", params.company_id);
+
+  const url = `/entries/pending${queryParams.toString() ? `?${queryParams.toString()}` : ""}`;
+  return request<{
+    entries: Array<{
+      id: string;
+      date: string;
+      account: string;
+      description: string;
+      debit: number;
+      credit: number;
+      status: string;
+      company_id: string;
+    }>;
+    total: number;
+  }>(url);
+}
+
+/** Busca lista de usuários administrativos. */
+export async function fetchUsers(params?: {
+  limit?: number;
+  offset?: number;
+}) {
+  const queryParams = new URLSearchParams();
+  if (params?.limit) queryParams.append("limit", params.limit.toString());
+  if (params?.offset) queryParams.append("offset", params.offset.toString());
+
+  const url = `/admin/users${queryParams.toString() ? `?${queryParams.toString()}` : ""}`;
+  return request<{
+    users: Array<{
+      username: string;
+      email?: string;
+      is_active: boolean;
+      created_at: string;
+      last_login?: string;
+    }>;
+    total: number;
+  }>(url);
+}
+
+/** Busca artigos da base de conhecimento. */
+export async function fetchKnowledgeArticles(params?: {
+  limit?: number;
+  offset?: number;
+  category?: string;
+}) {
+  const queryParams = new URLSearchParams();
+  if (params?.limit) queryParams.append("limit", params.limit.toString());
+  if (params?.offset) queryParams.append("offset", params.offset.toString());
+  if (params?.category) queryParams.append("category", params.category);
+
+  const url = `/knowledge/articles${queryParams.toString() ? `?${queryParams.toString()}` : ""}`;
+  return request<{
+    articles: Array<{
+      id: string;
+      title: string;
+      category: string;
+      content: string;
+      tags: string[];
+      created_at: string;
+    }>;
+    total: number;
+  }>(url);
+}
+
+/** Busca artigo específico por ID. */
+export async function fetchKnowledgeArticle(articleId: string) {
+  return request<{
+    id: string;
+    title: string;
+    category: string;
+    content: string;
+    tags: string[];
+    created_at: string;
+  }>(`/knowledge/articles/${articleId}`);
+}
+
+/** Busca na base de conhecimento. */
+export async function searchKnowledge(query: string) {
+  return request<{
+    results: Array<{
+      id: string;
+      title: string;
+      category: string;
+      snippet: string;
+      relevance: number;
+    }>;
+  }>(`/knowledge/search?q=${encodeURIComponent(query)}`);
+}
+
+/** Busca templates de relatórios. */
+export async function fetchReportTemplates() {
+  return request<{
+    templates: Array<{
+      id: string;
+      name: string;
+      category: string;
+      description: string;
+    }>;
+  }>("/templates/reports");
+}
+
+/** Busca templates de contas. */
+export async function fetchAccountTemplates() {
+  return request<{
+    templates: Array<{
+      id: string;
+      name: string;
+      category: string;
+      description: string;
+    }>;
+  }>("/templates/accounts");
+}
+
+/** Faz seed de contas para uma empresa. */
+export async function seedCompanyAccounts(companyId: string) {
+  return request<{
+    success: boolean;
+    message: string;
+    accounts_created: number;
+  }>(`/companies/${companyId}/seed-accounts`, {
+    method: "POST",
+  });
 }

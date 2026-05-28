@@ -10,39 +10,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fetchAudit } from "@/lib/api";
 import { useState } from "react";
 
-const DEMO_LANCAMENTOS = [
-  {
-    data: "2026-01-15",
-    tipo_conta: "receita",
-    valor: 85000,
-    descricao: "Receita de serviços Jan",
-  },
-  {
-    data: "2026-01-20",
-    tipo_conta: "despesa",
-    valor: 42000,
-    descricao: "Folha de pagamento Jan",
-  },
-  {
-    data: "2026-02-28",
-    tipo_conta: "despesa",
-    valor: 999999,
-    descricao: "Despesa suspeita round",
-  },
-  {
-    data: "2026-03-05",
-    tipo_conta: "receita",
-    valor: 88000,
-    descricao: "Receita Mar",
-  },
-  {
-    data: "2026-03-18",
-    tipo_conta: "despesa",
-    valor: 43000,
-    descricao: "Despesa operacional Mar",
-  },
-];
-
 const SEVERITY_STYLES: Record<string, string> = {
   critica: "bg-red-900/40 border-red-500 text-red-300",
   alta: "bg-orange-900/40 border-orange-500 text-orange-300",
@@ -83,19 +50,54 @@ interface AuditResult {
 }
 
 export default function AuditPage() {
+  const { selectedCompanyId, companies } = useCompany();
   const [loading, setLoading] = useState(false);
+  const [loadingEntries, setLoadingEntries] = useState(false);
   const [data, setData] = useState<AuditResult | null>(null);
   const [error, setError] = useState("");
+  const [entries, setEntries] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (selectedCompanyId) {
+      loadEntries();
+    }
+  }, [selectedCompanyId]);
+
+  async function loadEntries() {
+    if (!selectedCompanyId) return;
+
+    try {
+      setLoadingEntries(true);
+      const result = await fetchApprovedEntries(selectedCompanyId);
+      setEntries(result.entries);
+    } catch (e) {
+      console.error("Error loading entries:", e);
+      setError(e instanceof Error ? e.message : "Erro ao carregar lançamentos.");
+    } finally {
+      setLoadingEntries(false);
+    }
+  }
 
   async function runAudit() {
+    if (!selectedCompanyId) {
+      setError("Selecione uma empresa para executar a auditoria.");
+      return;
+    }
+
+    if (entries.length === 0) {
+      setError("Não há lançamentos aprovados para auditar.");
+      return;
+    }
+
     setLoading(true);
     setError("");
     try {
+      const company = companies.find(c => c.id === selectedCompanyId);
       const result = await fetchAudit(
-        DEMO_LANCAMENTOS,
+        entries,
         undefined,
         undefined,
-        "Empresa Demo",
+        company?.name || "Empresa",
       );
       setData(result);
     } catch (e) {

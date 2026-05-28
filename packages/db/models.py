@@ -8,10 +8,12 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    ARRAY,
     Boolean,
     CheckConstraint,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     Numeric,
@@ -205,3 +207,117 @@ class AuditLog(Base):
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+# ── Knowledge Base Models ────────────────────────────────────────────────────────
+
+
+class KnowledgeArticle(Base):
+    __tablename__ = "knowledge_articles"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(
+        String(50),
+        CheckConstraint("category IN ('norma','conceito','exemplo','caso_uso','glossario')"),
+        nullable=False,
+    )
+    subcategory: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    tags: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
+    source: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    language: Mapped[str] = mapped_column(String(10), nullable=False, default="pt-BR")
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    embeddings: Mapped[list["KnowledgeEmbedding"]] = relationship(back_populates="article", cascade="all, delete-orphan")
+
+
+class KnowledgeEmbedding(Base):
+    __tablename__ = "knowledge_embeddings"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    article_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("knowledge_articles.id", ondelete="CASCADE"), nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(ARRAY(Float), nullable=False)
+    model: Mapped[str] = mapped_column(String(50), nullable=False, default="text-embedding-3-small")
+    chunk_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    article: Mapped["KnowledgeArticle"] = relationship(back_populates="embeddings")
+
+
+class ReportTemplate(Base):
+    __tablename__ = "report_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    type: Mapped[str] = mapped_column(
+        String(50),
+        CheckConstraint("type IN ('dre','balanco','fluxo_caixa','mrr','lrr')"),
+        nullable=False,
+    )
+    sector: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    structure: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    formulas: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class AccountTemplate(Base):
+    __tablename__ = "account_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    sector: Mapped[str] = mapped_column(
+        String(50),
+        CheckConstraint("sector IN ('servicos','comercio','industria','tecnologia','saude','outros')"),
+        nullable=False,
+    )
+    accounts: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class GlossaryTerm(Base):
+    __tablename__ = "glossary_terms"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    term: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    definition: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    related_terms: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
+    examples: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    language: Mapped[str] = mapped_column(String(10), nullable=False, default="pt-BR")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class UseCase(Base):
+    __tablename__ = "use_cases"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    scenario: Mapped[str] = mapped_column(Text, nullable=False)
+    steps: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    expected_outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category: Mapped[str] = mapped_column(
+        String(50),
+        CheckConstraint("category IN ('abertura','operacao','relatorio','auditoria','fechamento')"),
+        nullable=False,
+    )
+    complexity: Mapped[str] = mapped_column(
+        String(20),
+        CheckConstraint("complexity IN ('basic','medium','advanced')"),
+        nullable=False,
+        default="medium",
+    )
+    related_articles: Mapped[list[uuid.UUID] | None] = mapped_column(ARRAY(UUID), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

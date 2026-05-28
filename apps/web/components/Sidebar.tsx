@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const NAV_GROUPS = [
   {
@@ -91,6 +91,12 @@ export function Sidebar() {
   const { user, logout } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    const handleToggle = () => setMobileOpen(prev => !prev);
+    document.addEventListener('toggle-mobile-sidebar', handleToggle);
+    return () => document.removeEventListener('toggle-mobile-sidebar', handleToggle);
+  }, []);
 
   const NavLink = ({
     href,

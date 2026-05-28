@@ -84,7 +84,7 @@ export default function AdminUsersPage() {
       loadUsers();
     } catch (err) {
       console.error("Error deactivating user:", err);
-      alert(err instanceof Error ? err.message : "Erro ao desativar usuário");
+      toast.error(err instanceof Error ? err.message : "Erro ao desativar usuário");
     }
   };
 
@@ -101,7 +101,7 @@ export default function AdminUsersPage() {
 
   const handleUpdateUser = async () => {
     if (!editingUser || !newUsername.trim() || !newEmail.trim()) {
-      alert("Por favor, preencha todos os campos.");
+      toast.error("Por favor, preencha todos os campos.");
       return;
     }
 
@@ -134,9 +134,10 @@ export default function AdminUsersPage() {
       setEditingUser(null);
       setShowEditModal(false);
       loadUsers();
+      toast.success("Usuário atualizado com sucesso!");
     } catch (err) {
       console.error("Error updating user:", err);
-      alert(err instanceof Error ? err.message : "Erro ao atualizar usuário");
+      toast.error(err instanceof Error ? err.message : "Erro ao atualizar usuário");
     } finally {
       setIsEditing(false);
     }
@@ -144,7 +145,7 @@ export default function AdminUsersPage() {
 
   const handleCreateUser = async () => {
     if (!newUsername.trim() || !newEmail.trim() || !newPassword.trim()) {
-      alert("Por favor, preencha todos os campos.");
+      toast.error("Por favor, preencha todos os campos.");
       return;
     }
 
@@ -172,9 +173,10 @@ export default function AdminUsersPage() {
       setNewPassword("");
       setShowCreateModal(false);
       loadUsers();
+      toast.success("Usuário criado com sucesso!");
     } catch (err) {
       console.error("Error creating user:", err);
-      alert(err instanceof Error ? err.message : "Erro ao criar usuário");
+      toast.error(err instanceof Error ? err.message : "Erro ao criar usuário");
     } finally {
       setIsCreating(false);
     }

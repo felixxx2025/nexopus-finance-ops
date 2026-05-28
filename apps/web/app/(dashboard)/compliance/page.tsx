@@ -4,38 +4,10 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertTriangle, CheckCircle, FileText, Loader2, Scale, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
+import { fetchCompliance } from "@/lib/api";
+import { useCompany } from "@/contexts/CompanyContext";
 
 const API_URL = "/api";
-
-const COMPLIANCE_ITEMS = [
-  {
-    category: "NBC TG",
-    items: [
-      { id: "nbc-tg-26", name: "NBC TG 26 - Apresentação das Demonstrações", status: "compliant", description: "Demonstrações em conformidade" },
-      { id: "nbc-tg-27", name: "NBC TG 27 - Redução ao Valor Recuperável", status: "compliant", description: "Testes de impairment realizados" },
-      { id: "nbc-tg-28", name: "NBC TG 28 - Instrumentos Financeiros", status: "warning", description: "Classificação precisa de revisão" },
-      { id: "nbc-tg-35", name: "NBC TG 35 - Apresentação de Demonstrações", status: "compliant", description: "Consolidação em conformidade" },
-    ],
-  },
-  {
-    category: "Lei 6.404/76",
-    items: [
-      { id: "lei-6404-1", name: "Escrituração Contábil", status: "compliant", description: "Livros contábeis regularizados" },
-      { id: "lei-6404-2", name: "Demonstrações Financeiras", status: "compliant", description: "DRE e Balanço publicados" },
-      { id: "lei-6404-3", name: "Lucro Real e Presumido", status: "compliant", description: "Apuração correta" },
-      { id: "lei-6404-4", name: "Dividendos Obrigatórios", status: "warning", description: "Verificar cálculo mínimo" },
-    ],
-  },
-  {
-    category: "Documentação",
-    items: [
-      { id: "doc-1", name: "Contratos Sociais", status: "compliant", description: "Ata de constituição disponível" },
-      { id: "doc-2", name: "Balancetes Mensais", status: "compliant", description: "Todos os meses de 2026" },
-      { id: "doc-3", name: "Notas Fiscais", status: "non-compliant", description: "Faltam notas de dezembro" },
-      { id: "doc-4", name: "Comprovantes de Pagamento", status: "warning", description: "Algumas notas pendentes" },
-    ],
-  },
-];
 
 const STATUS_CONFIG = {
   compliant: {
@@ -62,19 +34,22 @@ const STATUS_CONFIG = {
 };
 
 export default function CompliancePage() {
+  const { selectedCompanyId } = useCompany();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [complianceData, setComplianceData] = useState<any>(null);
 
   useEffect(() => {
-    // Simulate loading compliance data from API
     const loadCompliance = async () => {
+      if (!selectedCompanyId) {
+        setIsLoading(false);
+        return;
+      }
+
       try {
         setIsLoading(true);
-        // Future: fetch from API
-        // const res = await fetch(`${API_URL}/compliance`, { credentials: "include" });
-        // const data = await res.json();
-        // setComplianceData(data);
-        await new Promise(resolve => setTimeout(resolve, 500)); // Simulate network delay
+        const data = await fetchCompliance(selectedCompanyId);
+        setComplianceData(data);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Erro ao carregar dados de compliance");
       } finally {
@@ -83,22 +58,13 @@ export default function CompliancePage() {
     };
 
     loadCompliance();
-  }, []);
+  }, [selectedCompanyId]);
 
-  const totalItems = COMPLIANCE_ITEMS.reduce((acc, cat) => acc + cat.items.length, 0);
-  const compliantCount = COMPLIANCE_ITEMS.reduce(
-    (acc, cat) => acc + cat.items.filter((i) => i.status === "compliant").length,
-    0,
-  );
-  const warningCount = COMPLIANCE_ITEMS.reduce(
-    (acc, cat) => acc + cat.items.filter((i) => i.status === "warning").length,
-    0,
-  );
-  const nonCompliantCount = COMPLIANCE_ITEMS.reduce(
-    (acc, cat) => acc + cat.items.filter((i) => i.status === "non-compliant").length,
-    0,
-  );
-  const complianceScore = Math.round((compliantCount / totalItems) * 100);
+  const complianceItems = complianceData?.items || [];
+  const complianceScore = complianceData?.score || 0;
+  const compliantCount = complianceItems.filter((i: any) => i.status === "compliant").length;
+  const warningCount = complianceItems.filter((i: any) => i.status === "warning").length;
+  const nonCompliantCount = complianceItems.filter((i: any) => i.status === "non-compliant").length;
 
   if (isLoading) {
     return (
@@ -170,75 +136,102 @@ export default function CompliancePage() {
         </CardContent>
       </Card>
 
-      {/* Compliance Categories */}
-      {COMPLIANCE_ITEMS.map((category) => (
-        <Card key={category.category} className="bg-gray-900 border-gray-800">
-          <CardHeader>
-            <CardTitle className="text-white flex items-center gap-2">
-              {category.category === "NBC TG" && <FileText className="h-5 w-5" />}
-              {category.category === "Lei 6.404/76" && <Scale className="h-5 w-5" />}
-              {category.category}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {category.items.map((item) => {
-                const config = STATUS_CONFIG[item.status as keyof typeof STATUS_CONFIG];
-                const Icon = config.icon;
-                return (
-                  <div
-                    key={item.id}
-                    className={`p-4 rounded-lg border ${config.bg} ${config.border}`}
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Icon className={`h-4 w-4 ${config.color}`} />
-                          <h3 className="font-semibold text-white">{item.name}</h3>
-                          <Badge variant="outline" className={`border ${config.bg} ${config.color}`}>
-                            {config.label}
-                          </Badge>
-                        </div>
-                        <p className="text-sm text-gray-400">{item.description}</p>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-
-      {/* Remediation Tasks */}
-      <Card className="bg-orange-900/20 border-orange-700">
+      {/* Compliance Items */}
+      <Card className="bg-gray-900 border-gray-800">
         <CardHeader>
-          <CardTitle className="text-orange-400 flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5" />
-            Tarefas de Remediação
+          <CardTitle className="text-white flex items-center gap-2">
+            <Scale className="h-5 w-5" />
+            Itens de Compliance
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <ul className="space-y-2">
-            <li className="text-gray-300 text-sm flex items-start gap-2">
-              <span className="text-orange-400 mt-0.5">•</span>
-              <span>Revisar classificação de instrumentos financeiros (NBC TG 28)</span>
-            </li>
-            <li className="text-gray-300 text-sm flex items-start gap-2">
-              <span className="text-orange-400 mt-0.5">•</span>
-              <span>Verificar cálculo de dividendos obrigatórios (Lei 6.404/76)</span>
-            </li>
-            <li className="text-gray-300 text-sm flex items-start gap-2">
-              <span className="text-red-400 mt-0.5">•</span>
-              <span>Obter notas fiscais de dezembro (prioridade alta)</span>
-            </li>
-            <li className="text-gray-300 text-sm flex items-start gap-2">
-              <span className="text-yellow-400 mt-0.5">•</span>
-              <span>Complementar comprovantes de pagamento pendentes</span>
-            </li>
-          </ul>
+          <div className="space-y-3">
+            {complianceItems.map((item: any) => {
+              const config = STATUS_CONFIG[item.status as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.warning;
+              const Icon = config.icon;
+              return (
+                <div
+                  key={item.id}
+                  className={`p-4 rounded-lg border ${config.bg} ${config.border}`}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Icon className={`h-4 w-4 ${config.color}`} />
+                        <h3 className="font-semibold text-white">{item.name}</h3>
+                        <Badge variant="outline" className={`border ${config.bg} ${config.color}`}>
+                          {config.label}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-gray-400">{item.description}</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {complianceItems.length === 0 && (
+              <div className="text-center py-8 text-gray-400">
+                Nenhum item de compliance disponível
+              </div>
+            )}
+          </div>
         </CardContent>
       </Card>
+
+      {/* Errors Section */}
+      {complianceData?.errors && (
+        <Card className="bg-gray-900 border-gray-800">
+          <CardHeader>
+            <CardTitle className="text-white flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5" />
+              Erros de Compliance
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {complianceData.errors.cnpj && complianceData.errors.cnpj.length > 0 && (
+                <div className="p-3 bg-red-900/20 border border-red-700 rounded-lg">
+                  <h4 className="font-semibold text-red-400 mb-2">CNPJ</h4>
+                  <ul className="text-sm text-gray-300 list-disc list-inside">
+                    {complianceData.errors.cnpj.map((err: string, idx: number) => (
+                      <li key={idx}>{err}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {complianceData.errors.partida_dobrada && complianceData.errors.partida_dobrada.length > 0 && (
+                <div className="p-3 bg-yellow-900/20 border border-yellow-700 rounded-lg">
+                  <h4 className="font-semibold text-yellow-400 mb-2">Partida Dobrada</h4>
+                  <ul className="text-sm text-gray-300 list-disc list-inside">
+                    {complianceData.errors.partida_dobrada.map((err: any, idx: number) => (
+                      <li key={idx}>
+                        {err.description} - Débito: {err.debit}, Crédito: {err.credit}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {complianceData.errors.equacao_patrimonial && complianceData.errors.equacao_patrimonial.length > 0 && (
+                <div className="p-3 bg-orange-900/20 border border-orange-700 rounded-lg">
+                  <h4 className="font-semibold text-orange-400 mb-2">Equação Patrimonial</h4>
+                  <ul className="text-sm text-gray-300 list-disc list-inside">
+                    {complianceData.errors.equacao_patrimonial.map((err: any, idx: number) => (
+                      <li key={idx}>
+                        Diferença: {err.diferenca} (Ativo: {err.ativo}, Passivo+PL: {err.passivo + err.pl})
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {!complianceData.errors.cnpj?.length && !complianceData.errors.partida_dobrada?.length && !complianceData.errors.equacao_patrimonial?.length && (
+                <div className="text-center py-4 text-green-400">
+                  Nenhum erro de compliance detectado
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

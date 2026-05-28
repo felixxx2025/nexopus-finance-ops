@@ -1,17 +1,17 @@
 "use client";
 
 import {
-    createContext,
-    useCallback,
-    useContext,
-    useEffect,
-    useState,
-} from "react";
+  login as apiLogin,
+  logout as apiLogout,
+  me as apiMe
+} from "@/lib/api";
 import {
-    login as apiLogin,
-    logout as apiLogout,
-    me as apiMe,
-} from "../lib/api";
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
 
 interface AuthContextValue {
   user: string | null;
@@ -25,20 +25,27 @@ const AuthContext = createContext<AuthContextValue>({
   user: null,
   isAuthenticated: false,
   isLoading: true,
-  login: async () => {},
-  logout: async () => {},
+  login: async () => { },
+  logout: async () => { },
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
   // Restaura sessão via /auth/me (valida cookie httpOnly no servidor)
   useEffect(() => {
+    // Skip auth check on login page to prevent loading issues
+    if (typeof window === "undefined" || window.location.pathname === "/login") {
+      return;
+    }
+
     apiMe()
       .then((data) => setUser(data.username))
-      .catch(() => setUser(null))
-      .finally(() => setIsLoading(false));
+      .catch(() => {
+        // Expected when not logged in - just set user to null
+        setUser(null);
+      });
   }, []);
 
   const login = useCallback(async (username: string, password: string) => {
