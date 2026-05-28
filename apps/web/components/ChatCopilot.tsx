@@ -1,7 +1,5 @@
 import { useState } from "react";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
@@ -27,7 +25,8 @@ export default function ChatCopilot() {
     setLoading(true);
 
     try {
-      const res = await fetch(`${API}/chat`, {
+      const API_URL = "/api";
+      const res = await fetch(`${API_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: userMsg }),
@@ -85,11 +84,10 @@ export default function ChatCopilot() {
                 className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
               >
                 <div
-                  className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm ${
-                    msg.role === "user"
-                      ? "bg-blue-600 text-white"
-                      : "bg-gray-100 text-gray-800"
-                  }`}
+                  className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm ${msg.role === "user"
+                    ? "bg-blue-600 text-white"
+                    : "bg-gray-100 text-gray-800"
+                    }`}
                 >
                   <p className="whitespace-pre-wrap">{msg.content}</p>
                   {msg.sources && msg.sources.length > 0 && (
