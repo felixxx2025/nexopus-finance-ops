@@ -12,9 +12,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from itsdangerous import URLSafeTimedSerializer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
@@ -58,6 +61,9 @@ except Exception as _redis_err:
     logger.warning("Redis não disponível (%s) — rate limiting e blacklist desativados.", _redis_err)
     _redis = None
 
+# ── CSRF Protection ────────────────────────────────────────────────────────────
+_csrf_serializer = URLSafeTimedSerializer(settings.secret_key, salt="csrf-salt")
+
 # ── Rate Limiter ──────────────────────────────────────────────────────────────
 limiter = Limiter(
     key_func=get_remote_address,
@@ -80,6 +86,40 @@ async def get_db():
         yield session
 
 
+# ── Lifespan ───────────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    # Auto-seed knowledge base se vazia (apenas em development)
+    if settings.environment == "development":
+        try:
+            from sqlalchemy import select  # noqa: PLC0415
+            from packages.db.models import KnowledgeArticle  # noqa: PLC0415
+
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(select(KnowledgeArticle).limit(1))
+                has_knowledge = result.scalar_one_or_none()
+
+                if not has_knowledge:
+                    logger.info("Base de conhecimento vazia, executando auto-seed (Sentence Transformers local)...")
+                    from services.knowledge.knowledge_seeder import seed_knowledge_base  # noqa: PLC0415
+                    from services.knowledge.template_service import seed_templates  # noqa: PLC0415
+
+                    kb_stats = await seed_knowledge_base(db)
+                    template_stats = await seed_templates(db)
+                    logger.info("Auto-seed concluído: KB=%s, Templates=%s", kb_stats, template_stats)
+        except Exception as e:
+            logger.warning("Auto-seed falhou: %s", e)
+
+    logger.info("Nexopus Finance API v%s iniciada (env=%s).", _API_VERSION, settings.environment)
+
+    yield
+
+    # Shutdown
+    logger.info("Nexopus Finance API v%s encerrando.", _API_VERSION)
+
+
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Nexopus Finance Ops — API",
@@ -88,7 +128,12 @@ app = FastAPI(
     docs_url="/docs" if settings.docs_enabled else None,
     redoc_url="/redoc" if settings.docs_enabled else None,
     openapi_url="/openapi.json" if settings.docs_enabled else None,
+    lifespan=lifespan,
 )
+
+# Setup observability before adding middleware
+from apps.api.observability import setup_all  # noqa: PLC0415
+setup_all(app, settings)
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -98,7 +143,7 @@ app.add_middleware(
     allow_origins=settings.allowed_origins_list,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With", "X-CSRF-Token"],
 )
 
 
@@ -152,6 +197,20 @@ _user_db = _load_user_db()
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class DocumentCreate(BaseModel):
+    company_id: str
+    file_url: str
+    original_filename: Optional[str] = None
+    type: str  # pdf, excel, sped
+    status: str = "uploaded"
+
+
+class DocumentUpdate(BaseModel):
+    status: Optional[str] = None
+    error_message: Optional[str] = None
+    ai_confidence: Optional[float] = None
 
 
 class TokenResponse(BaseModel):
@@ -311,14 +370,31 @@ async def me(current_user: dict = Depends(get_current_user)) -> dict:
 
 # ── Health & Ready ────────────────────────────────────────────────────────────
 
+def require_infra_auth(request: Request) -> None:
+    """Require infra secret for health/ready endpoints."""
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or auth_header != f"Bearer {settings.infra_secret}":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
 @app.get("/health", tags=["infra"])
-def health() -> dict:
+def health(request: Request) -> dict:
+    # Skip auth in development for convenience
+    if settings.environment != "production":
+        return {"status": "ok", "service": "nexopus-finance-api", "version": _API_VERSION}
+    require_infra_auth(request)
     return {"status": "ok", "service": "nexopus-finance-api", "version": _API_VERSION}
 
 
 @app.get("/ready", tags=["infra"])
-async def ready(db: AsyncSession = Depends(get_db)) -> dict:
+async def ready(request: Request, db: AsyncSession = Depends(get_db)) -> dict:
     """Verifica prontidão da API (DB + Redis)."""
+    # Skip auth in development for convenience
+    if settings.environment != "production":
+        pass
+    else:
+        require_infra_auth(request)
+    
     from sqlalchemy import text  # noqa: PLC0415
     checks: dict = {}
 
@@ -539,7 +615,7 @@ async def list_companies(
     from sqlalchemy import select  # noqa: PLC0415
     from packages.db.models import Company  # noqa: PLC0415
 
-    result = await db.execute(select(Company).order_by(Company.name))
+    result = await db.execute(select(Company).order_by(Company.name).limit(1000))
     companies = result.scalars().all()
     return {
         "companies": [
@@ -709,7 +785,7 @@ async def list_documents(
     from sqlalchemy import select  # noqa: PLC0415
     from packages.db.models import Document  # noqa: PLC0415
 
-    stmt = select(Document).where(Document.company_id == company_id).order_by(Document.created_at.desc())
+    stmt = select(Document).where(Document.company_id == company_id).order_by(Document.created_at.desc()).limit(100)
     result = await db.execute(stmt)
     docs = result.scalars().all()
     return {
@@ -727,6 +803,138 @@ async def list_documents(
             for d in docs
         ]
     }
+
+
+@app.get("/documents/{document_id}", tags=["documents"])
+async def get_document(
+    document_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Recupera detalhes de um documento específico."""
+    from sqlalchemy import select  # noqa: PLC0415
+    from packages.db.models import Document  # noqa: PLC0415
+
+    result = await db.execute(
+        select(Document).where(Document.id == uuid.UUID(document_id))
+    )
+    doc = result.scalar_one_or_none()
+
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento não encontrado")
+
+    return {
+        "id": str(doc.id),
+        "company_id": str(doc.company_id),
+        "file_url": doc.file_url,
+        "filename": doc.original_filename,
+        "type": doc.type,
+        "status": doc.status,
+        "parsed": doc.parsed,
+        "error_message": doc.error_message,
+        "ai_confidence": float(doc.ai_confidence) if doc.ai_confidence else None,
+        "created_at": doc.created_at.isoformat(),
+        "updated_at": doc.updated_at.isoformat(),
+    }
+
+
+@app.post("/documents", tags=["documents"])
+async def create_document(
+    body: DocumentCreate,
+    current_user: dict = Depends(require_role(["admin", "analista"])),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Cria registro de documento manualmente (sem upload de arquivo)."""
+    from packages.db.models import Document  # noqa: PLC0415
+
+    doc = Document(
+        company_id=uuid.UUID(body.company_id),
+        file_url=body.file_url,
+        original_filename=body.original_filename,
+        type=body.type,
+        status=body.status,
+        parsed=False,
+    )
+    db.add(doc)
+    await db.commit()
+    await db.refresh(doc)
+
+    await _audit(
+        db, "document_created", current_user["sub"],
+        entity_type="document", entity_id=doc.id,
+        company_id=body.company_id,
+        metadata={"filename": body.original_filename, "type": body.type},
+    )
+
+    return {"id": str(doc.id), "message": "Documento criado com sucesso"}
+
+
+@app.put("/documents/{document_id}", tags=["documents"])
+async def update_document(
+    document_id: str,
+    body: DocumentUpdate,
+    current_user: dict = Depends(require_role(["admin", "analista"])),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Atualiza status e metadados de um documento."""
+    from packages.db.models import Document  # noqa: PLC0415
+    from sqlalchemy import select  # noqa: PLC0415
+
+    result = await db.execute(
+        select(Document).where(Document.id == uuid.UUID(document_id))
+    )
+    doc = result.scalar_one_or_none()
+
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento não encontrado")
+
+    if body.status is not None:
+        doc.status = body.status
+    if body.error_message is not None:
+        doc.error_message = body.error_message
+    if body.ai_confidence is not None:
+        doc.ai_confidence = body.ai_confidence
+
+    doc.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    await _audit(
+        db, "document_updated", current_user["sub"],
+        entity_type="document", entity_id=doc.id,
+        metadata={"status": doc.status},
+    )
+
+    return {"id": str(doc.id), "message": "Documento atualizado com sucesso"}
+
+
+@app.delete("/documents/{document_id}", tags=["documents"])
+async def delete_document(
+    document_id: str,
+    current_user: dict = Depends(require_role(["admin"])),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Exclui documento (apenas admin)."""
+    from packages.db.models import Document  # noqa: PLC0415
+    from sqlalchemy import select  # noqa: PLC0415
+
+    result = await db.execute(
+        select(Document).where(Document.id == uuid.UUID(document_id))
+    )
+    doc = result.scalar_one_or_none()
+
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento não encontrado")
+
+    await db.delete(doc)
+    await db.commit()
+
+    await _audit(
+        db, "document_deleted", current_user["sub"],
+        entity_type="document", entity_id=doc.id,
+        metadata={"filename": doc.original_filename},
+    )
+
+    return {"message": "Documento excluído com sucesso"}
 
 
 # ── Journal entries: revisão humana ──────────────────────────────────────────
@@ -820,19 +1028,18 @@ async def list_approved_entries(
 
     stmt = (
         select(JournalEntry)
+        .options(selectinload(JournalEntry.items))
         .where(JournalEntry.company_id == company_id)
         .where(JournalEntry.status == "approved")
         .order_by(JournalEntry.date.desc())
+        .limit(500)
     )
     result = await db.execute(stmt)
     entries = result.scalars().all()
 
     entries_data = []
     for e in entries:
-        # Buscar items do lançamento
-        items_stmt = select(JournalItem).where(JournalItem.entry_id == e.id)
-        items_result = await db.execute(items_stmt)
-        items = items_result.scalars().all()
+        items = e.items
 
         entries_data.append({
             "id": str(e.id),
@@ -876,8 +1083,11 @@ async def get_compliance_status(
     cnpj_valid = validate_cnpj(company.cnpj) if company.cnpj else False
 
     # Buscar lançamentos aprovados
+    from sqlalchemy.orm import selectinload  # noqa: PLC0415
+
     entries_stmt = (
         select(JournalEntry)
+        .options(selectinload(JournalEntry.items))
         .where(JournalEntry.company_id == company_id)
         .where(JournalEntry.status == "approved")
     )
@@ -889,9 +1099,7 @@ async def get_compliance_status(
     double_entry_errors = []
 
     for entry in entries:
-        items_stmt = select(JournalItem).where(JournalItem.entry_id == entry.id)
-        items_result = await db.execute(items_stmt)
-        items = items_result.scalars().all()
+        items = entry.items
 
         total_debit = sum(float(i.debit) if i.debit else 0 for i in items)
         total_credit = sum(float(i.credit) if i.credit else 0 for i in items)
@@ -1060,7 +1268,7 @@ async def ai_forecast(
 ) -> dict:
     """Gera previsão de fluxo de caixa para 30/60/90 dias com 3 cenários."""
     from services.ai_engine.agent_predictor import predict_cashflow  # noqa: PLC0415
-    result = predict_cashflow(body.lancamentos, body.company_name)
+    result = await predict_cashflow(body.lancamentos, body.company_name)
     return result
 
 
@@ -1080,7 +1288,7 @@ async def ai_audit(
 ) -> dict:
     """Executa auditoria automática sobre lançamentos contábeis."""
     from services.ai_engine.agent_auditor import audit_entries  # noqa: PLC0415
-    result = audit_entries(
+    result = await audit_entries(
         body.lancamentos,
         dre=body.dre,
         balanco=body.balanco,
@@ -1103,12 +1311,12 @@ async def ai_assistant(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
-    """Assistente financeiro conversacional com streaming SSE e RAG."""
-    from services.ai_engine.agent_assistant import stream_answer  # noqa: PLC0415
+    """Assistente financeiro conversacional com streaming SSE e RAG (100% local)."""
+    from services.ai_engine.agent_assistant_local import stream_answer_local  # noqa: PLC0415
 
     async def event_generator():
         try:
-            async for chunk in stream_answer(body.question, body.context, body.history, db):
+            async for chunk in stream_answer_local(body.question, body.context, body.history, db):
                 yield f"data: {chunk}\n\n"
         except Exception as e:
             logger.error("SSE stream error: %s", e)
@@ -1137,7 +1345,7 @@ async def ai_reconcile(
 ) -> dict:
     """Executa conciliação bancária automática."""
     from services.ai_engine.agent_reconciler import reconcile  # noqa: PLC0415
-    result = reconcile(body.bank_entries, body.accounting_entries, body.company_name)
+    result = await reconcile(body.bank_entries, body.accounting_entries, body.company_name)
     return result
 
 
@@ -1184,7 +1392,7 @@ async def list_users(current_user: dict = Depends(require_role(["admin"]))) -> d
 
     db = AsyncSessionLocal()
     try:
-        result = await db.execute(select(User).order_by(User.created_at.desc()))
+        result = await db.execute(select(User).order_by(User.created_at.desc()).limit(100))
         users = result.scalars().all()
         return {
             "users": [
@@ -1372,21 +1580,38 @@ ws_manager = ConnectionManager()
 
 
 @app.websocket("/ws/notifications")
-async def websocket_notifications(websocket: WebSocket):
+async def websocket_notifications(
+    websocket: WebSocket,
+    token: str | None = None,
+):
     """
     WebSocket para notificações em tempo real.
     Token JWT enviado via query param ?token=<jwt> (evita exposição em path/logs).
+    Se token não fornecido, tenta validar via cookie httpOnly.
     """
-    token = websocket.query_params.get("token")
-    if not token:
-        await websocket.close(code=4001)
+    # Try token from query param first
+    jwt_token = token
+    
+    # If no token in query, try to get from cookie
+    if not jwt_token:
+        cookies = websocket.query_params.get("cookie") or websocket.headers.get("cookie")
+        if cookies:
+            # Parse cookies to find access_token
+            for cookie in cookies.split(";"):
+                cookie = cookie.strip()
+                if cookie.startswith("access_token="):
+                    jwt_token = cookie.split("=", 1)[1]
+                    break
+    
+    if not jwt_token:
+        await websocket.close(code=4001, reason="No token provided")
         return
 
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        payload = jwt.decode(jwt_token, settings.secret_key, algorithms=[settings.algorithm])
         username = payload.get("sub", "unknown")
     except JWTError:
-        await websocket.close(code=4001)
+        await websocket.close(code=4001, reason="Invalid token")
         return
 
     # Verifica blacklist
@@ -1394,7 +1619,7 @@ async def websocket_notifications(websocket: WebSocket):
     if jti and _redis:
         try:
             if _redis.get(f"bl:{jti}"):
-                await websocket.close(code=4001)
+                await websocket.close(code=4001, reason="Token revoked")
                 return
         except Exception:
             pass
@@ -1414,100 +1639,33 @@ async def websocket_notifications(websocket: WebSocket):
         ws_manager.disconnect(websocket, username)
 
 
-# ── Chat / Copilot (RAG simples) ──────────────────────────────────────────────
-
-class ChatRequest(BaseModel):
-    question: str
-
-
-class ChatResponse(BaseModel):
-    answer: str
-    sources: list[str]
-
-
-_KNOWLEDGE_BASE_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "docs", "knowledge_base", "contabilidade_brasileira.md"
-)
-
-
-def _load_knowledge_base() -> str:
-    """Carrega a base de conhecimento contábil do arquivo markdown."""
-    try:
-        with open(_KNOWLEDGE_BASE_PATH, encoding="utf-8") as f:
-            return f.read()
-    except FileNotFoundError:
-        logger.warning("Base de conhecimento não encontrada em %s", _KNOWLEDGE_BASE_PATH)
-        return ""
-
-
-_KNOWLEDGE_CACHE = _load_knowledge_base()
-
-
-def _rag_search(question: str, knowledge: str) -> tuple[str, list[str]]:
-    """
-    Busca simples por palavras-chave na base de conhecimento.
-    Retorna (resposta, trechos relevantes).
-    """
-    if not knowledge:
-        return "Base de conhecimento indisponível.", []
-
-    question_lower = question.lower()
-    keywords = question_lower.split()
-    relevant_sections = []
-
-    lines = knowledge.split("\n")
-    current_section = ""
-    current_lines = []
-
-    for line in lines:
-        if line.startswith("#"):
-            if current_lines and any(kw in " ".join(current_lines).lower() for kw in keywords):
-                relevant_sections.append("\n".join(current_lines))
-            current_section = line
-            current_lines = [line]
-        else:
-            current_lines.append(line)
-
-    if current_lines and any(kw in " ".join(current_lines).lower() for kw in keywords):
-        relevant_sections.append("\n".join(current_lines))
-
-    if not relevant_sections:
-        return (
-            "Não encontrei informações específicas sobre isso na base de conhecimento. "
-            "Tente perguntar sobre DRE, Balanço Patrimonial, Lei 6404, NBC TG, Partida Dobrada, "
-            "Plano de Contas, IRPJ, CSLL ou Equação Patrimonial.",
-            [],
-        )
-
-    context = "\n\n".join(relevant_sections[:3])
-    answer = f"Com base na documentação contábil:\n\n{context}"
-    return answer, relevant_sections[:3]
-
-
-@app.post("/chat", tags=["chat"], response_model=ChatResponse)
-async def chat_copilot(body: ChatRequest) -> ChatResponse:
-    """
-    Nexopus Copilot — assistente de contabilidade brasileira com RAG simples.
-
-    Responde perguntas sobre:
-    - Lei 6.404/1976 (Lei das S.A.)
-    - NBC TG 26 (Apresentação das Demonstrações Contábeis)
-    - DRE (Demonstração do Resultado)
-    - Balanço Patrimonial
-    - Partida Dobrada
-    - Plano de Contas
-    - IRPJ e CSLL
-    """
-    answer, sources = _rag_search(body.question, _KNOWLEDGE_CACHE)
-    return ChatResponse(answer=answer, sources=sources)
-
-
 # ── Knowledge Base API ─────────────────────────────────────────────────────────
 
 class KnowledgeSearchRequest(BaseModel):
     query: str
     category: Optional[str] = None
     limit: int = 5
+
+
+class KnowledgeArticleCreate(BaseModel):
+    title: str
+    content: str
+    category: str
+    subcategory: Optional[str] = None
+    tags: Optional[list[str]] = None
+    source: Optional[str] = None
+    source_url: Optional[str] = None
+    language: str = "pt-BR"
+
+
+class KnowledgeArticleUpdate(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    category: Optional[str] = None
+    subcategory: Optional[str] = None
+    tags: Optional[list[str]] = None
+    source: Optional[str] = None
+    source_url: Optional[str] = None
 
 
 @app.post("/knowledge/search", tags=["knowledge"])
@@ -1527,6 +1685,210 @@ async def search_knowledge_api(
         min_similarity=0.6,
     )
     return {"results": results, "count": len(results)}
+
+
+@app.post("/knowledge/articles", tags=["knowledge"])
+async def create_knowledge_article(
+    body: KnowledgeArticleCreate,
+    current_user: dict = Depends(require_role(["admin", "analista"])),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Cria novo artigo na base de conhecimento."""
+    from packages.db.models import KnowledgeArticle  # noqa: PLC0415
+    from services.knowledge.embedding_service import generate_embedding  # noqa: PLC0415
+
+    article = KnowledgeArticle(
+        title=body.title,
+        content=body.content,
+        category=body.category,
+        subcategory=body.subcategory,
+        tags=body.tags,
+        source=body.source,
+        source_url=body.source_url,
+        language=body.language,
+    )
+    db.add(article)
+    await db.commit()
+    await db.refresh(article)
+
+    # Gerar embedding
+    embedding = generate_embedding(f"{article.title}\n\n{article.content}")
+    from packages.db.models import KnowledgeEmbedding  # noqa: PLC0415
+    emb_record = KnowledgeEmbedding(
+        article_id=article.id,
+        embedding=embedding,
+        model="paraphrase-multilingual-MiniLM-L12-v2",
+    )
+    db.add(emb_record)
+    await db.commit()
+
+    await _audit(
+        db, "knowledge_article_created", current_user["sub"],
+        entity_type="knowledge_article", entity_id=article.id,
+        metadata={"title": article.title, "category": article.category},
+    )
+
+    return {"id": str(article.id), "message": "Artigo criado com sucesso"}
+
+
+@app.put("/knowledge/articles/{article_id}", tags=["knowledge"])
+async def update_knowledge_article(
+    article_id: str,
+    body: KnowledgeArticleUpdate,
+    current_user: dict = Depends(require_role(["admin", "analista"])),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Atualiza artigo existente na base de conhecimento."""
+    from packages.db.models import KnowledgeArticle  # noqa: PLC0415
+    from sqlalchemy import select  # noqa: PLC0415
+
+    result = await db.execute(
+        select(KnowledgeArticle).where(KnowledgeArticle.id == uuid.UUID(article_id))
+    )
+    article = result.scalar_one_or_none()
+
+    if not article:
+        raise HTTPException(status_code=404, detail="Artigo não encontrado")
+
+    # Atualizar campos fornecidos
+    if body.title is not None:
+        article.title = body.title
+    if body.content is not None:
+        article.content = body.content
+    if body.category is not None:
+        article.category = body.category
+    if body.subcategory is not None:
+        article.subcategory = body.subcategory
+    if body.tags is not None:
+        article.tags = body.tags
+    if body.source is not None:
+        article.source = body.source
+    if body.source_url is not None:
+        article.source_url = body.source_url
+
+    article.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    # Nota: Regeneração de embeddings desabilitada temporariamente devido a erro de tipo PG
+    # Para regenerar embeddings, use DELETE + POST no artigo
+
+    await _audit(
+        db, "knowledge_article_updated", current_user["sub"],
+        entity_type="knowledge_article", entity_id=article.id,
+        metadata={"title": article.title},
+    )
+
+    return {"id": str(article.id), "message": "Artigo atualizado com sucesso"}
+
+
+@app.delete("/knowledge/articles/{article_id}", tags=["knowledge"])
+async def delete_knowledge_article(
+    article_id: str,
+    current_user: dict = Depends(require_role(["admin"])),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Exclui artigo da base de conhecimento (apenas admin)."""
+    from packages.db.models import KnowledgeArticle  # noqa: PLC0415
+    from sqlalchemy import delete, select  # noqa: PLC0415
+
+    # Verificar se artigo existe
+    result = await db.execute(
+        select(KnowledgeArticle).where(KnowledgeArticle.id == uuid.UUID(article_id))
+    )
+    article = result.scalar_one_or_none()
+
+    if not article:
+        raise HTTPException(status_code=404, detail="Artigo não encontrado")
+
+    title = article.title
+
+    # Deletar usando DELETE direto para evitar carregar embeddings (erro PG type)
+    await db.execute(
+        delete(KnowledgeArticle).where(KnowledgeArticle.id == uuid.UUID(article_id))
+    )
+    await db.commit()
+
+    await _audit(
+        db, "knowledge_article_deleted", current_user["sub"],
+        entity_type="knowledge_article", entity_id=article.id,
+        metadata={"title": title},
+    )
+
+    return {"message": "Artigo excluído com sucesso"}
+
+
+@app.post("/knowledge/upload", tags=["knowledge"])
+async def upload_knowledge_pdf(
+    request: Request,
+    file: UploadFile = File(...),
+    title: str = None,  # type: ignore[assignment]
+    category: str = "conceito",  # type: ignore[assignment]
+    current_user: dict = Depends(require_role(["admin", "analista"])),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Upload de PDF para processar e adicionar à base de conhecimento RAG."""
+    from services.parser.pdf_parser import extract_pdf  # noqa: PLC0415
+    from packages.db.models import KnowledgeArticle, KnowledgeEmbedding  # noqa: PLC0415
+    from services.knowledge.embedding_service import generate_embedding  # noqa: PLC0415
+
+    if file.content_type != "application/pdf":
+        raise HTTPException(
+            status_code=415,
+            detail="Apenas arquivos PDF são suportados para upload de conhecimento"
+        )
+
+    # Extrair texto do PDF
+    content_bytes = await file.read()
+    import tempfile
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp.write(content_bytes)
+        tmp_path = tmp.name
+
+    try:
+        text_content = extract_pdf(tmp_path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Erro ao processar PDF: {str(e)}")
+    finally:
+        import os
+        os.unlink(tmp_path)
+
+    # Usar título fornecido ou nome do arquivo
+    article_title = title or file.filename.replace(".pdf", "")
+
+    # Criar artigo
+    article = KnowledgeArticle(
+        title=article_title,
+        content=text_content,
+        category=category,
+        source=f"Upload: {file.filename}",
+        language="pt-BR",
+    )
+    db.add(article)
+    await db.commit()
+    await db.refresh(article)
+
+    # Gerar embedding
+    embedding = generate_embedding(f"{article.title}\n\n{article.content}")
+    emb_record = KnowledgeEmbedding(
+        article_id=article.id,
+        embedding=embedding,
+        model="paraphrase-multilingual-MiniLM-L12-v2",
+    )
+    db.add(emb_record)
+    await db.commit()
+
+    await _audit(
+        db, "knowledge_pdf_uploaded", current_user["sub"],
+        entity_type="knowledge_article", entity_id=article.id,
+        metadata={"filename": file.filename, "title": article.title},
+    )
+
+    return {
+        "id": str(article.id),
+        "message": "PDF processado e adicionado à base de conhecimento",
+        "title": article.title,
+        "content_length": len(text_content)
+    }
 
 
 @app.get("/knowledge/articles/{article_id}", tags=["knowledge"])
@@ -1623,37 +1985,3 @@ async def seed_knowledge_base(
         "knowledge": stats_kb,
         "templates": stats_templates,
     }
-
-
-# ── Startup ───────────────────────────────────────────────────────────────────
-
-@app.on_event("startup")
-async def startup_event():
-    try:
-        from apps.api.observability import setup_all  # noqa: PLC0415
-        setup_all(app, settings)
-    except Exception as e:
-        logger.warning("Observabilidade parcialmente inicializada: %s", e)
-
-    # Auto-seed knowledge base se vazia (apenas em development)
-    if settings.environment == "development":
-        try:
-            from sqlalchemy import select  # noqa: PLC0415
-            from packages.db.models import KnowledgeArticle  # noqa: PLC0415
-
-            async with AsyncSessionLocal() as db:
-                result = await db.execute(select(KnowledgeArticle).limit(1))
-                has_knowledge = result.scalar_one_or_none()
-
-                if not has_knowledge:
-                    logger.info("Base de conhecimento vazia, executando auto-seed (Sentence Transformers local)...")
-                    from services.knowledge.knowledge_seeder import seed_knowledge_base  # noqa: PLC0415
-                    from services.knowledge.template_service import seed_templates  # noqa: PLC0415
-
-                    kb_stats = await seed_knowledge_base(db)
-                    template_stats = await seed_templates(db)
-                    logger.info("Auto-seed concluído: KB=%s, Templates=%s", kb_stats, template_stats)
-        except Exception as e:
-            logger.warning("Auto-seed falhou: %s", e)
-
-    logger.info("Nexopus Finance API v%s iniciada (env=%s).", _API_VERSION, settings.environment)

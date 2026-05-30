@@ -25,9 +25,10 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 7
     environment: str = "development"  # development | production | testing
-    docs_enabled: bool = True
-    cookie_secure: bool = False
+    docs_enabled: bool = Field(default=False)
+    cookie_secure: bool = Field(default=False)
     log_level: str = "INFO"
+    infra_secret: str = Field(default="change-me-infra-secret")
 
     # ── Admin ─────────────────────────────────────────────────────────────
     admin_username: str = Field(...)
@@ -92,6 +93,11 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
+
+    @property
+    def cookie_secure_value(self) -> bool:
+        """Return cookie_secure based on environment."""
+        return self.cookie_secure if self.is_production else False
 
     @property
     def sync_database_url(self) -> str:
