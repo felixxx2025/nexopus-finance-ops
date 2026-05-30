@@ -2,24 +2,32 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useCompany } from "@/contexts/CompanyContext";
-import { fetchDocuments } from "@/lib/api";
-import { Download, Eye, FileSpreadsheet, FileText, Image as ImageIcon, Loader2, Search } from "lucide-react";
+import {
+  createDocument,
+  deleteDocument,
+  fetchDocument,
+  fetchDocuments,
+  updateDocument,
+} from "@/lib/api";
+import { Download, Eye, FilePlus, FileSpreadsheet, FileText, Image as ImageIcon, Loader2, Pencil, Search, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 const API_URL = "/api";
 
 interface Document {
   id: string;
-  name: string;
+  filename: string;
   type: string;
-  size: string;
-  uploaded_at: string;
   status: string;
-  company_id?: string;
+  parsed: boolean;
+  error_message: string | null;
+  ai_confidence: number | null;
+  created_at: string;
 }
 
 const FILE_ICONS = {
@@ -41,6 +49,14 @@ export default function DocumentsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("all");
   const { selectedCompanyId } = useCompany();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingDocument, setEditingDocument] = useState<Document | null>(null);
+  const [formData, setFormData] = useState({
+    file_url: "",
+    original_filename: "",
+    type: "pdf",
+    status: "uploaded",
+  });
 
   useEffect(() => {
     loadDocuments();
@@ -65,7 +81,7 @@ export default function DocumentsPage() {
 
   const filteredDocs = documents.filter((doc) => {
     const matchesSearch =
-      doc.name.toLowerCase().includes(searchQuery.toLowerCase());
+      doc.filename.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus =
       selectedStatus === "all" || doc.status === selectedStatus;
     return matchesSearch && matchesStatus;
@@ -124,6 +140,91 @@ export default function DocumentsPage() {
     }
   };
 
+  const handleCreate = async () => {
+    if (!selectedCompanyId) {
+      setError("Selecione uma empresa primeiro");
+      return;
+    }
+    try {
+      setIsLoading(true);
+      await createDocument({
+        company_id: selectedCompanyId,
+        file_url: formData.file_url,
+        original_filename: formData.original_filename,
+        type: formData.type,
+        status: formData.status,
+      });
+      setIsModalOpen(false);
+      resetForm();
+      loadDocuments();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao criar documento");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!editingDocument) return;
+    try {
+      setIsLoading(true);
+      await updateDocument(editingDocument.id, {
+        status: formData.status,
+      });
+      setIsModalOpen(false);
+      resetForm();
+      loadDocuments();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao atualizar documento");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Tem certeza que deseja excluir este documento?")) return;
+    try {
+      setIsLoading(true);
+      await deleteDocument(id);
+      loadDocuments();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao excluir documento");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleEdit = async (doc: Document) => {
+    try {
+      const fullDoc = await fetchDocument(doc.id);
+      setEditingDocument(doc);
+      setFormData({
+        file_url: fullDoc.file_url,
+        original_filename: fullDoc.filename,
+        type: fullDoc.type,
+        status: fullDoc.status,
+      });
+      setIsModalOpen(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao carregar documento");
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      file_url: "",
+      original_filename: "",
+      type: "pdf",
+      status: "uploaded",
+    });
+    setEditingDocument(null);
+  };
+
+  const openModal = () => {
+    resetForm();
+    setIsModalOpen(true);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -138,9 +239,9 @@ export default function DocumentsPage() {
             <Loader2 className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
             Atualizar
           </Button>
-          <Button>
-            <Download className="h-4 w-4 mr-2" />
-            Upload Novo
+          <Button onClick={openModal}>
+            <FilePlus className="h-4 w-4 mr-2" />
+            Novo Documento
           </Button>
         </div>
       </div>
@@ -187,7 +288,7 @@ export default function DocumentsPage() {
                 <TableRow className="border-gray-700">
                   <TableHead className="text-gray-400">Nome</TableHead>
                   <TableHead className="text-gray-400">Tipo</TableHead>
-                  <TableHead className="text-gray-400">Tamanho</TableHead>
+                  <TableHead className="text-gray-400">Processado</TableHead>
                   <TableHead className="text-gray-400">Upload</TableHead>
                   <TableHead className="text-gray-400">Status</TableHead>
                   <TableHead className="text-gray-400">Ações</TableHead>
@@ -207,13 +308,13 @@ export default function DocumentsPage() {
                       <TableRow key={doc.id} className="border-gray-800">
                         <TableCell className="text-white font-medium flex items-center gap-2">
                           <Icon className="h-4 w-4 text-gray-400" />
-                          {doc.name}
+                          {doc.filename}
                         </TableCell>
                         <TableCell className="text-gray-300 uppercase text-xs">
                           {doc.type}
                         </TableCell>
-                        <TableCell className="text-gray-400">{doc.size}</TableCell>
-                        <TableCell className="text-gray-400">{formatDate(doc.uploaded_at)}</TableCell>
+                        <TableCell className="text-gray-400">-</TableCell>
+                        <TableCell className="text-gray-400">{formatDate(doc.created_at)}</TableCell>
                         <TableCell>
                           <Badge
                             variant="outline"
@@ -237,10 +338,28 @@ export default function DocumentsPage() {
                               variant="ghost"
                               size="icon"
                               className="h-8 w-8"
-                              onClick={() => handleDownload(doc.id, doc.name)}
+                              onClick={() => handleDownload(doc.id, doc.filename)}
                               title="Baixar"
                             >
                               <Download className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => handleEdit(doc)}
+                              title="Editar"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => handleDelete(doc.id)}
+                              title="Excluir"
+                            >
+                              <Trash2 className="h-4 w-4 text-red-400" />
                             </Button>
                           </div>
                         </TableCell>
@@ -253,6 +372,78 @@ export default function DocumentsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Modal for Create/Edit */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <Card className="bg-gray-900 border-gray-800 w-full max-w-md">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-white">
+                  {editingDocument ? "Editar Documento" : "Novo Documento"}
+                </CardTitle>
+                <Button variant="ghost" size="sm" onClick={() => setIsModalOpen(false)}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <Label className="text-gray-300">URL do Arquivo</Label>
+                <Input
+                  value={formData.file_url}
+                  onChange={(e) => setFormData({ ...formData, file_url: e.target.value })}
+                  className="bg-gray-800 border-gray-700 text-white mt-1"
+                  placeholder="http://minio:9000/arquivo.pdf"
+                />
+              </div>
+              <div>
+                <Label className="text-gray-300">Nome do Arquivo</Label>
+                <Input
+                  value={formData.original_filename}
+                  onChange={(e) => setFormData({ ...formData, original_filename: e.target.value })}
+                  className="bg-gray-800 border-gray-700 text-white mt-1"
+                  placeholder="documento.pdf"
+                />
+              </div>
+              <div>
+                <Label className="text-gray-300">Tipo</Label>
+                <select
+                  value={formData.type}
+                  onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+                  className="bg-gray-800 border-gray-700 text-white mt-1 w-full rounded-lg px-3 py-2"
+                >
+                  <option value="pdf">PDF</option>
+                  <option value="excel">Excel</option>
+                  <option value="sped">SPED</option>
+                </select>
+              </div>
+              <div>
+                <Label className="text-gray-300">Status</Label>
+                <select
+                  value={formData.status}
+                  onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                  className="bg-gray-800 border-gray-700 text-white mt-1 w-full rounded-lg px-3 py-2"
+                >
+                  <option value="uploaded">Enviado</option>
+                  <option value="processing">Processando</option>
+                  <option value="processed">Processado</option>
+                  <option value="failed">Falhou</option>
+                </select>
+              </div>
+              <div className="flex justify-end gap-2 pt-4">
+                <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button onClick={editingDocument ? handleUpdate : handleCreate} disabled={isLoading}>
+                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  {editingDocument ? "Atualizar" : "Criar"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

@@ -12,7 +12,7 @@ import {
   useReactTable
 } from "@tanstack/react-table";
 import { Download, FileText, Scale } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 const API_URL = "/api";
 
@@ -46,11 +46,11 @@ function DRETable({ data }: { data: DREData }) {
     lucro_liquido: "Lucro Líquido",
   };
 
-  const rows = Object.entries(LABELS).map(
+  const rows = useMemo(() => Object.entries(LABELS).map(
     ([key, label]) => ({ label, value: data[key] ?? 0, key }),
-  );
+  ), [data]);
 
-  const columns: ColumnDef<typeof rows[0]>[] = [
+  const columns: ColumnDef<typeof rows[0]>[] = useMemo(() => [
     {
       accessorKey: "label",
       header: "Descrição",
@@ -68,7 +68,7 @@ function DRETable({ data }: { data: DREData }) {
         </span>
       ),
     },
-  ];
+  ], []);
 
   const table = useReactTable({
     data: rows,
@@ -241,7 +241,7 @@ export default function Reports() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${type}_${selectedCompany.name.replace(/\s+/g, "_")}_${selectedYear}.xlsx`;
+      a.download = `${type}_${selectedCompany?.name?.replace(/\s+/g, "_") || "company"}_${selectedYear}.xlsx`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);

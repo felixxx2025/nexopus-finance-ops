@@ -35,18 +35,18 @@ class Settings(BaseSettings):
     admin_password: Optional[str] = None  # apenas para geração de hash em dev
 
     # ── Database ──────────────────────────────────────────────────────────
-    database_url: str = "postgresql+asyncpg://ledger:ledger_dev_pass@localhost:5432/ledger_ai"
+    database_url: str = Field(default="postgresql+asyncpg://ledger:ledger_dev_pass@db:5432/ledger_ai")
     database_pool_size: int = 10
     database_max_overflow: int = 20
 
     # ── Redis ─────────────────────────────────────────────────────────────
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str = Field(default="redis://redis:6379/0")
 
     # ── RabbitMQ / Celery ─────────────────────────────────────────────────
-    broker_url: str = "amqp://nexopus:rabbit_dev_pass@localhost:5672//"
+    broker_url: str = Field(default="amqp://nexopus:rabbit_dev_pass@rabbitmq:5672//")
 
     # ── S3 / MinIO ────────────────────────────────────────────────────────
-    s3_endpoint: str = "http://localhost:9000"
+    s3_endpoint: str = Field(default="http://minio:9000")
     s3_access_key: str = ""
     s3_secret_key: str = ""
     s3_bucket: str = "ledger-docs"

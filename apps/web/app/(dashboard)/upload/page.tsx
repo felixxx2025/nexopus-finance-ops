@@ -60,10 +60,11 @@ export default function UploadPage() {
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      if (!file) continue;
       setUploadStatus((prev) => ({ ...prev, [file.name]: "uploading" }));
 
       try {
-        await uploadDocument(file, selectedCompanyId);
+        await uploadDocument(file, selectedCompanyId || "");
         setUploadStatus((prev) => ({ ...prev, [file.name]: "success" }));
         successCount++;
       } catch (err: unknown) {
@@ -159,7 +160,7 @@ export default function UploadPage() {
                       {(file.size / 1024 / 1024).toFixed(2)} MB
                     </p>
                   </div>
-                  {getStatusIcon(uploadStatus[file.name])}
+                  {getStatusIcon(uploadStatus[file.name] || "")}
                   {!uploading && (
                     <Button
                       variant="ghost"

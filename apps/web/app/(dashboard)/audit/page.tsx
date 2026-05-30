@@ -7,8 +7,9 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { fetchAudit } from "@/lib/api";
-import { useState } from "react";
+import { useCompany } from "@/contexts/CompanyContext";
+import { fetchApprovedEntries, fetchAudit } from "@/lib/api";
+import { useEffect, useState } from "react";
 
 const SEVERITY_STYLES: Record<string, string> = {
   critica: "bg-red-900/40 border-red-500 text-red-300",
@@ -31,9 +32,9 @@ interface AuditResult {
     tipo: string;
     descricao: string;
     severidade: string;
-    lancamento_ref: string;
-    valor_suspeito: number;
-    norma_violada: string;
+    lancamento_ref: string | null;
+    valor_suspeito: number | null;
+    norma_violada: string | null;
     recomendacao: string;
   }>;
   compliance: {

@@ -38,7 +38,7 @@ function SummaryCard({
   color,
 }: {
   label: string;
-  value: number;
+  value: number | undefined;
   color: string;
 }) {
   return (
@@ -248,14 +248,15 @@ export default function ReconciliationPage() {
             {filteredMatches.map((m: any, i: number) => {
               const st =
                 STATUS_STYLES[m.status] || STATUS_STYLES["APENAS_BANCO"];
+              const defaultStyle = STATUS_STYLES["APENAS_BANCO"];
               return (
                 <div
                   key={i}
-                  className={`bg-gray-900 rounded-xl p-4 border ${st.row}`}
+                  className={`bg-gray-900 rounded-xl p-4 border ${st?.row || defaultStyle?.row || ""}`}
                 >
                   <div className="flex items-center justify-between gap-4 flex-wrap">
                     <span
-                      className={`text-xs font-bold px-2 py-0.5 rounded-full border ${st.badge}`}
+                      className={`text-xs font-bold px-2 py-0.5 rounded-full border ${st?.badge || defaultStyle?.badge || ""}`}
                     >
                       {m.status.replace("_", " ")}
                     </span>
