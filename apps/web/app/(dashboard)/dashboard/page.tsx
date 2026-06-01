@@ -17,7 +17,7 @@ import {
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 type KPIData = {
   receita_bruta: number;
@@ -123,29 +123,32 @@ export default function Dashboard() {
     }
   }
 
-  const alerts = kpi ? [
-    {
-      id: 1,
-      type: "warning" as const,
-      icon: AlertTriangle,
-      message: "Despesas operacionais acima de 70% da receita",
-      visible: kpi.despesas_operacionais / kpi.receita_liquida > 0.7,
-    },
-    {
-      id: 2,
-      type: "success" as const,
-      icon: CheckCircle,
-      message: "Margem EBITDA saudável (> 20%)",
-      visible: kpi.margem_ebitda > 20,
-    },
-    {
-      id: 3,
-      type: "warning" as const,
-      icon: TrendingDown,
-      message: "Lucro em queda vs período anterior",
-      visible: kpi.crescimento_lucro < 0,
-    },
-  ].filter(a => a.visible) : [];
+  const alerts = useMemo(() => {
+    if (!kpi) return [];
+    return [
+      {
+        id: 1,
+        type: "warning" as const,
+        icon: AlertTriangle,
+        message: "Despesas operacionais acima de 70% da receita",
+        visible: kpi.despesas_operacionais / kpi.receita_liquida > 0.7,
+      },
+      {
+        id: 2,
+        type: "success" as const,
+        icon: CheckCircle,
+        message: "Margem EBITDA saudável (> 20%)",
+        visible: kpi.margem_ebitda > 20,
+      },
+      {
+        id: 3,
+        type: "warning" as const,
+        icon: TrendingDown,
+        message: "Lucro em queda vs período anterior",
+        visible: kpi.crescimento_lucro < 0,
+      },
+    ].filter(a => a.visible);
+  }, [kpi]);
 
   if (!selectedCompany) {
     return (
@@ -179,18 +182,7 @@ export default function Dashboard() {
       )}
 
       {loading && !kpi ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map((i) => (
-            <Card key={i} className="bg-gray-900 border-gray-800">
-              <CardHeader className="pb-2">
-                <div className="h-4 bg-gray-800 rounded w-1/2" />
-              </CardHeader>
-              <CardContent>
-                <div className="h-8 bg-gray-800 rounded w-3/4" />
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <PageSkeleton />
       ) : kpi ? (
         <>
           {/* KPIs Grid */}
@@ -454,9 +446,15 @@ export default function Dashboard() {
           )}
         </>
       ) : (
-        <div className="text-center py-12">
-          <p className="text-gray-400">Nenhum dado disponível para o período selecionado.</p>
-        </div>
+        <EmptyState
+          icon="file"
+          title="Nenhum dado disponível"
+          description="Selecione uma empresa e período para visualizar os dados do dashboard."
+          action={{
+            label: "Atualizar",
+            onClick: loadKPIs,
+          }}
+        />
       )}
     </div>
   );
