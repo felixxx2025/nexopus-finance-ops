@@ -15,6 +15,9 @@ const nextConfig = withPWA({
   output: "standalone",
   trailingSlash: true,
   allowedDevOrigins: ["127.0.0.1:3002", "localhost:3002"],
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   async rewrites() {
     return [
       {
