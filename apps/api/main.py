@@ -147,6 +147,15 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def add_hsts_header(request: Request, call_next):
+    """Adiciona header HSTS em produção."""
+    response = await call_next(request)
+    if settings.is_production:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+
 # ── Auditoria helper ──────────────────────────────────────────────────────────
 
 async def _audit(
@@ -233,6 +242,18 @@ def _create_access_token(sub: str, role: str = "viewer") -> tuple[str, str]:
     return token, jti
 
 
+def _create_refresh_token(sub: str) -> str:
+    """Cria refresh token com expiração longer."""
+    from datetime import timedelta
+    expire = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
+    token = jwt.encode(
+        {"sub": sub, "exp": expire, "type": "refresh"},
+        settings.secret_key,
+        algorithm=settings.algorithm,
+    )
+    return token
+
+
 async def get_current_user(request: Request) -> dict:
     """
     Extrai e valida JWT de:
@@ -302,20 +323,50 @@ def require_role(allowed_roles: list[str]):
 @limiter.limit("10/minute")
 async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends(get_db)) -> JSONResponse:
     """Autentica usuário, retorna JWT no body e define httpOnly cookie."""
+    # Check if user is locked out
+    if _redis:
+        lockout_key = f"lockout:{body.username}"
+        lockout = _redis.get(lockout_key)
+        if lockout:
+            logger.warning("Conta '%s' está bloqueada por tentativas falhas", body.username)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Conta bloqueada. Tente novamente em 15 minutos."
+            )
+    
     user = _user_db.authenticate(body.username, body.password)
     if not user:
         logger.warning("Tentativa de login inválida para '%s'", body.username)
+        
+        # Increment failed attempts
+        if _redis:
+            attempts_key = f"failed_attempts:{body.username}"
+            attempts = _redis.incr(attempts_key)
+            _redis.expire(attempts_key, 300)  # 5 minutos
+            
+            # Lockout after 5 attempts
+            if attempts >= 5:
+                lockout_key = f"lockout:{body.username}"
+                _redis.setex(lockout_key, 900, "1")  # 15 minutos lockout
+                logger.warning("Conta '%s' bloqueada após %d tentativas falhas", body.username, attempts)
+        
         await _audit(
             db, "login_failed", body.username,
             ip_address=request.client.host if request.client else None,
         )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciais inválidas")
+    
+    # Reset failed attempts on success
+    if _redis:
+        attempts_key = f"failed_attempts:{body.username}"
+        _redis.delete(attempts_key)
 
     role = user.get("role", "viewer")
     if hasattr(role, "value"):
         role = role.value
 
     token, _jti = _create_access_token(sub=body.username, role=role)
+    refresh_token = _create_refresh_token(sub=body.username)
     logger.info("Login bem-sucedido para '%s' (role=%s)", body.username, role)
 
     await _audit(
@@ -324,7 +375,7 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
     )
 
     response = JSONResponse(
-        content={"access_token": token, "token_type": "bearer", "username": body.username, "role": role}
+        content={"access_token": token, "refresh_token": refresh_token, "token_type": "bearer", "username": body.username, "role": role}
     )
     response.set_cookie(
         key="nexopus_token",
@@ -336,6 +387,35 @@ async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends
         path="/",
     )
     return response
+
+
+@app.post("/auth/refresh", tags=["auth"])
+async def refresh_token(request: Request) -> JSONResponse:
+    """Renova access token usando refresh token."""
+    refresh_token_str = request.headers.get("Authorization", "").replace("Bearer ", "")
+    if not refresh_token_str:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token não fornecido")
+    
+    try:
+        payload = jwt.decode(refresh_token_str, settings.secret_key, algorithms=[settings.algorithm])
+        if payload.get("type") != "refresh":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
+        
+        username = payload.get("sub")
+        user = _user_db.get_user(username)
+        if not user:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuário não encontrado")
+        
+        role = user.get("role", "viewer")
+        if hasattr(role, "value"):
+            role = role.value
+        
+        access_token, _jti = _create_access_token(sub=username, role=role)
+        return JSONResponse(
+            content={"access_token": access_token, "token_type": "bearer", "username": username, "role": role}
+        )
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token inválido")
 
 
 @app.post("/auth/logout", tags=["auth"])
