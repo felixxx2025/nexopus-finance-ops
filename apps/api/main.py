@@ -214,6 +214,7 @@ def _load_user_db():
 
 
 _user_db = _load_user_db()
+_VALID_ROLES = {"admin", "analista", "viewer"}
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -575,6 +576,12 @@ class UserUpdate(BaseModel):
     email: str | None = None
     password: str | None = None
     role: str | None = None
+
+
+def _validate_role(role: str) -> str:
+    if role not in _VALID_ROLES:
+        raise HTTPException(status_code=422, detail="Role inválida. Use admin, analista ou viewer.")
+    return role
 
 
 @app.post("/companies", tags=["companies"], status_code=201)
@@ -1480,29 +1487,28 @@ async def list_audit_logs(
 
 
 @app.get("/admin/users", tags=["admin"])
-async def list_users(current_user: dict = Depends(require_role(["admin"]))) -> dict:
+async def list_users(
+    current_user: dict = Depends(require_role(["admin"])),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     """Lista usuários configurados (apenas admin)."""
     from sqlalchemy import select  # noqa: PLC0415
     from packages.db.models import User  # noqa: PLC0415
 
-    db = AsyncSessionLocal()
-    try:
-        result = await db.execute(select(User).order_by(User.created_at.desc()).limit(100))
-        users = result.scalars().all()
-        return {
-            "users": [
-                {
-                    "username": u.username,
-                    "email": u.email,
-                    "role": u.role,
-                    "is_active": u.is_active,
-                    "created_at": u.created_at.isoformat(),
-                }
-                for u in users
-            ]
-        }
-    finally:
-        await db.close()
+    result = await db.execute(select(User).order_by(User.created_at.desc()).limit(100))
+    users = result.scalars().all()
+    return {
+        "users": [
+            {
+                "username": u.username,
+                "email": u.email,
+                "role": u.role,
+                "is_active": u.is_active,
+                "created_at": u.created_at.isoformat(),
+            }
+            for u in users
+        ]
+    }
 
 
 @app.post("/admin/users", tags=["admin"], status_code=201)
@@ -1514,6 +1520,8 @@ async def create_user(
     """Cria um novo usuário. Apenas admin."""
     from sqlalchemy import select  # noqa: PLC0415
     from packages.db.models import User  # noqa: PLC0415
+
+    role = _validate_role(body.role)
 
     # Verifica duplicidade de username
     existing = await db.execute(select(User).where(User.username == body.username))
@@ -1531,7 +1539,7 @@ async def create_user(
         username=body.username,
         email=body.email,
         password_hash=password_hash,
-        role=body.role,
+        role=role,
         is_active=True,
     )
     db.add(user)
@@ -1541,7 +1549,7 @@ async def create_user(
     await _audit(
         db, "user_created", current_user["sub"],
         entity_type="user", entity_id=str(user.id),
-        metadata={"username": body.username, "role": body.role},
+        metadata={"username": body.username, "role": role},
     )
 
     return {
@@ -1586,7 +1594,7 @@ async def update_user(
         user.password_hash = pwd_context.hash(body.password)
 
     if body.role:
-        user.role = body.role
+        user.role = _validate_role(body.role)
 
     await db.commit()
     await db.refresh(user)

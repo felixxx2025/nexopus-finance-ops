@@ -3,15 +3,6 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { Sidebar } from '../Sidebar';
 
-// Mock useCompany context
-vi.mock('@/contexts/CompanyContext', () => ({
-  useCompany: vi.fn(() => ({
-    selectedCompanyId: 'test-id',
-    setSelectedCompanyId: vi.fn(),
-    companies: [{ id: '1', name: 'Test Company' }],
-  })),
-}));
-
 // Mock useAuth context
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: vi.fn(() => ({
@@ -28,9 +19,8 @@ describe('Sidebar Component', () => {
     expect(screen.getByText('Relatórios')).toBeInTheDocument();
   });
 
-  it('shows company selector', () => {
+  it('renders user menu with username', () => {
     render(<Sidebar />);
-    const selector = screen.getByRole('combobox');
-    expect(selector).toBeInTheDocument();
+    expect(screen.getByText('test-user')).toBeInTheDocument();
   });
 });

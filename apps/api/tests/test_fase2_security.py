@@ -104,6 +104,31 @@ def test_admin_pode_approve_report_404():
     assert res.status_code == 404
 
 
+def test_admin_users_usa_dependency_override():
+    """Listagem de usuários deve usar get_db, permitindo mock em testes."""
+    token, _ = _create_access_token("admin", role="admin")
+    res = client.get("/admin/users", headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 200
+    assert res.json() == {"users": []}
+
+
+def test_create_user_rejeita_role_invalida():
+    """Criação de usuário bloqueia roles fora da matriz RBAC."""
+    token, _ = _create_access_token("admin", role="admin")
+    res = client.post(
+        "/admin/users",
+        json={
+            "username": "novo",
+            "email": "novo@nexopus.test",
+            "password": "senha-segura",
+            "role": "superuser",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 422
+    assert "Role inválida" in res.json()["detail"]
+
+
 # ── Login / Cookie / Logout ───────────────────────────────────────────────────
 
 def test_login_seta_cookie_httponly():

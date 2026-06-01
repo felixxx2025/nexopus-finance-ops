@@ -92,6 +92,7 @@ Use o `access_token` retornado como `Authorization: Bearer <token>` em todas as 
 | Método  | Endpoint          | Role  | Descrição                        |
 | ------- | ----------------- | ----- | -------------------------------- |
 | `POST`  | `/auth/token`     | —     | Login → JWT + cookie httpOnly    |
+| `POST`  | `/auth/refresh`   | —     | Renova access token via refresh token |
 | `POST`  | `/auth/logout`    | any   | Invalida token (Redis blacklist) |
 | `GET`   | `/auth/me`        | any   | Dados do usuário corrente        |
 
@@ -100,6 +101,10 @@ Use o `access_token` retornado como `Authorization: Bearer <token>` em todas as 
 | ------- | ---------------------------- | ----------------- | ------------------------------ |
 | `POST`  | `/documents/upload`          | admin / analista  | Upload PDF/XLSX (magic bytes)  |
 | `GET`   | `/documents`                 | any               | Lista documentos da empresa    |
+| `GET`   | `/documents/{id}`            | any               | Detalhes de documento          |
+| `POST`  | `/documents`                 | admin / analista  | Cria documento manualmente     |
+| `PUT`   | `/documents/{id}`            | admin / analista  | Atualiza status/metadados      |
+| `DELETE`| `/documents/{id}`            | admin             | Exclui documento               |
 
 ### Lançamentos
 | Método  | Endpoint                     | Role              | Descrição                      |
@@ -119,18 +124,26 @@ Use o `access_token` retornado como `Authorization: Bearer <token>` em todas as 
 | ------- | --------------------------------------- | ----- | ----------------------------------- |
 | `POST`  | `/companies`                            | admin | Cria empresa + seed plano de contas |
 | `GET`   | `/companies`                            | any   | Lista empresas                      |
+| `PATCH` | `/companies/{id}`                       | admin | Atualiza empresa                    |
+| `DELETE`| `/companies/{id}`                       | admin | Exclui empresa                      |
 | `POST`  | `/companies/{id}/seed-accounts`         | admin | Semeia plano de contas NBC TG       |
 
-### Nexopus Copilot
-| Método  | Endpoint  | Role  | Descrição                            |
-| ------- | --------- | ----- | ------------------------------------ |
-| `POST`  | `/chat`    | any   | Assistente de contabilidade com RAG |
+### IA / Nexopus Copilot
+| Método  | Endpoint        | Role | Descrição                                     |
+| ------- | --------------- | ---- | --------------------------------------------- |
+| `POST`  | `/ai/assistant` | any  | Assistente financeiro com streaming SSE e RAG |
+| `POST`  | `/ai/forecast`  | any  | Forecast de caixa 30/60/90 dias               |
+| `POST`  | `/ai/audit`     | any  | Auditoria automática de lançamentos           |
+| `POST`  | `/ai/reconcile` | any  | Conciliação bancária automática               |
 
 ### Admin
-| Método  | Endpoint             | Role  | Descrição                 |
-| ------- | -------------------- | ----- | ------------------------- |
-| `GET`   | `/admin/audit-logs`  | admin | Trilha completa de ações  |
-| `GET`   | `/admin/users`       | admin | Lista usuários            |
+| Método  | Endpoint                       | Role  | Descrição                              |
+| ------- | ------------------------------ | ----- | -------------------------------------- |
+| `GET`   | `/admin/audit-logs`            | admin | Trilha completa de ações               |
+| `GET`   | `/admin/users`                 | admin | Lista usuários ativos/inativos do banco |
+| `POST`  | `/admin/users`                 | admin | Cria usuário com role validada         |
+| `PATCH` | `/admin/users/{username}`      | admin | Atualiza usuário com role validada     |
+| `PATCH` | `/admin/users/{username}/deactivate` | admin | Desativa usuário                 |
 
 ### Infra
 | Método | Endpoint   | Descrição                        |
@@ -152,7 +165,7 @@ POST /documents/upload?company_id=<uuid>
 Celery worker:
   → Document.status = "processing"
   → download do MinIO
-  → agent_parser (LLaMA 405B) + AIController (confiança + fallback)
+  → agent_parser + AIController (confiança + fallback)
   → agent_classifier → agent_generator
   → compliance: validate_double_entry
   → _persist_entries (journal_entries + journal_items)
@@ -162,6 +175,10 @@ Celery worker:
 ```
 
 ## RBAC
+
+Usuários podem ser configurados via `EXTRA_USERS_JSON` e também persistidos na tabela `users`.
+Os endpoints administrativos de usuários validam roles contra a matriz oficial (`admin`,
+`analista`, `viewer`) e usam a dependência `get_db`, facilitando testes e troca de sessão.
 
 | Permissão         | admin | analista | viewer |
 | ----------------- | :---: | :------: | :----: |
@@ -174,11 +191,11 @@ Celery worker:
 
 ## Testes
 
+### Backend (API)
+
 ```bash
-cd apps/api
-# conftest.py seta env vars automaticamente
-python3 -m pytest -v
-# → 93 testes | auth, engine, compliance, health, fase1, fase2, fase3
+python3 -m pip install -r apps/api/requirements.txt
+python3 -m pytest apps/api/tests -v
 ```
 
 Suítes:
@@ -189,6 +206,45 @@ Suítes:
 - `test_fase1_pipeline.py` — upload, estados, magic bytes, RBAC
 - `test_fase2_security.py` — roles, logout, cookie, observabilidade
 - `test_fase3_engine_ai.py` — plano de contas, AIController, fallback
+
+### Frontend (unitários)
+
+```bash
+cd apps/web
+npm run test:unit
+```
+
+### Frontend (e2e com Playwright)
+
+Os testes e2e requerem a infraestrutura completa (API + banco + Redis + etc.):
+
+```bash
+# Inicia todos os serviços (postgres, redis, rabbitmq, minio, api, web)
+docker-compose up -d
+
+# Aguarda os serviços ficarem saudáveis
+docker-compose ps
+
+# Roda os testes e2e
+cd apps/web
+npm run test:e2e
+```
+
+### Última execução local registrada
+
+```bash
+# Backend
+./venv/bin/python -m pytest apps/api/tests/test_fase2_security.py -q
+# 23 passed, 1 warning
+
+./venv/bin/python -m pytest apps/api/tests -q
+# 148 passed, 1 warning
+
+# Frontend unitários
+npx vitest run components/__tests__ lib/__tests__
+# Test Files  3 passed (3)
+# Tests  8 passed (8)
+```
 
 ## Variáveis de ambiente
 
@@ -216,7 +272,7 @@ Veja [.env.example](.env.example). Variáveis críticas:
 
 ## Nexopus Copilot
 
-Assistente de contabilidade brasileira com RAG (Retrieval-Augmented Generation) simples.
+Assistente de contabilidade brasileira com RAG (Retrieval-Augmented Generation) híbrido.
 
 ### Base de Conhecimento
 
@@ -226,7 +282,17 @@ Conteúdo coberto:
 - Partida Dobrada e Equação Patrimonial
 - Plano de Contas Padrão NBC TG
 - IRPJ e CSLL (impostos sobre lucro)
-- Glossário contábil
+- Glossário contábil (200+ termos)
+- Templates de relatórios por setor
+- Casos de uso práticos
+
+### Arquitetura RAG
+
+- **Embeddings:** Sentence Transformers (paraphrase-multilingual-MiniLM-L12-v2) - 100% local
+- **Busca Semântica:** PostgreSQL + pgvector com índice HNSW
+- **Busca Lexical:** PostgreSQL tsvector com GIN index
+- **Web Search:** Wikipedia API como fallback (quando resultados locais insuficientes)
+- **Combinação:** Reranking híbrido (semantic + lexical + web)
 
 ### Uso
 
@@ -241,6 +307,7 @@ curl -X POST http://localhost:8000/chat \
 - Botão flutuante no canto inferior direito
 - Chat com histórico de mensagens
 - Exibição de fontes relevantes da base de conhecimento
+- Streaming de respostas em tempo real
 
 ### Fases implementadas
 
@@ -274,7 +341,17 @@ curl -X POST http://localhost:8000/chat \
 - Glossário contábil com 200+ termos
 - Templates de relatórios (DRE, Balanço) e planos de contas por setor
 - RAG híbrido (semântico + lexical) para contexto enriquecido no chat
+- Web Search (Wikipedia API) como fallback para resultados insuficientes
 - Componente de chat flutuante reutilizável no frontend
 - Auto-seed no startup (development) - sem necessidade de API keys externas
 - Endpoint `/admin/knowledge/seed` para popular base inicial
-- Integração RAG no `agent_assistant.py` para respostas mais precisas
+- Integração RAG no `agent_assistant_local.py` para respostas mais precisas
+
+### Fase 5 — Otimizações de Performance ✅
+- **Backend:** Adição de `limit()` em queries SQL para evitar carregamento excessivo
+- **Backend:** Uso de `selectinload()` para evitar problema N+1 em relacionamentos
+- **Backend:** Índices PostgreSQL otimizados (idx_journal_entries_company_date, idx_journal_items_entry, etc.)
+- **Frontend:** Adição de `useMemo()` para otimizar re-renders em componentes pesados
+- **Frontend:** Lazy loading do componente Notifications via `dynamic()`
+- **Frontend:** TanStack Query configurado com staleTime de 5 minutos para cache
+- **Infraestrutura:** Rate limiting configurado em endpoints críticos (10/minute, 5/minute, 20/minute)

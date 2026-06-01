@@ -118,23 +118,27 @@ def setup_otlp(endpoint: Optional[str], service_name: str = "nexopus-finance-api
         logger.warning("Dependências OTel não encontradas (%s) — tracing desativado.", e)
 
 
-def setup_prometheus(app) -> None:
+def setup_prometheus(app, environment: str = "development") -> None:
     """Adiciona endpoint /metrics com métricas Prometheus ao app FastAPI."""
+    if getattr(app.state, "prometheus_configured", False):
+        logger.info("Prometheus já configurado para este app — ignorando nova inicialização.")
+        return
     try:
         from prometheus_fastapi_instrumentator import Instrumentator
 
-        Instrumentator(
+        instrumentator = Instrumentator(
             should_group_status_codes=True,
             should_ignore_untemplated=True,
-            should_respect_env_var=True,
-            should_instrument_requests_inprogress=True,
+            should_instrument_requests_inprogress=False,
             excluded_handlers=["/health", "/ready", "/metrics"],
-            env_var_name="PROMETHEUS_ENABLED",
-        ).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+        )
+        instrumentator.instrument(app)
+        instrumentator.expose(app, endpoint="/metrics", include_in_schema=False)
+        app.state.prometheus_configured = True
 
         logger.info("Prometheus /metrics exposto.")
-    except ImportError:
-        logger.warning("prometheus-fastapi-instrumentator não instalado — /metrics desativado.")
+    except Exception as e:
+        logger.warning("Erro ao configurar Prometheus /metrics: %s", e)
 
 
 def setup_all(app, settings) -> None:
@@ -154,5 +158,5 @@ def setup_all(app, settings) -> None:
     setup_otlp(
         endpoint=getattr(settings, "otlp_endpoint", None),
     )
-    setup_prometheus(app)
+    setup_prometheus(app, environment=getattr(settings, "environment", "development"))
     logger.info("Observabilidade inicializada (json_logs=%s).", json_logs)
