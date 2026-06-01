@@ -1,0 +1,55 @@
+replicaCount:
+  api: 3
+  web: 2
+
+image:
+  api:
+    repository: nexopus-api
+    tag: latest
+    pullPolicy: IfNotPresent
+  web:
+    repository: nexopus-web
+    tag: latest
+    pullPolicy: IfNotPresent
+
+service:
+  api:
+    type: ClusterIP
+    port: 8000
+  web:
+    type: ClusterIP
+    port: 3000
+
+resources:
+  api:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+  web:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations: {}
+  hosts:
+    - host: nexopus.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
