@@ -3,6 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { useAuth } from "@/contexts/AuthContext";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { AlertTriangle, Bell, CheckCircle, Info, X } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -34,8 +35,11 @@ export function Notifications() {
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const unreadCount = notifications.filter((n) => !n.read).length;
+  const { token } = useAuth();
 
-  const { isConnected, lastMessage } = useWebSocket("/api/ws/notifications");
+  // Use WebSocket with token for authentication
+  // Only connect when authenticated to prevent retry loops
+  const { isConnected, lastMessage } = useWebSocket("/ws/notifications", token || undefined);
 
   useEffect(() => {
     if (lastMessage) {

@@ -8,51 +8,82 @@ interface WebSocketMessage {
   timestamp: string;
 }
 
-export function useWebSocket(url: string) {
+export function useWebSocket(url: string, token?: string) {
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
   const [messages, setMessages] = useState<WebSocketMessage[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const wsUrl = url.startsWith("ws://") || url.startsWith("wss://")
-      ? url
-      : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}${url}`;
+    // Get API URL from environment or default
+    const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-    wsRef.current = new WebSocket(wsUrl);
+    // Convert HTTP to WebSocket protocol
+    const wsProtocol = API_URL.startsWith("https") ? "wss" : "ws";
+    const wsHost = API_URL.replace(/^https?:\/\//, "").replace(/\/$/, "");
 
-    wsRef.current.onopen = () => {
-      setIsConnected(true);
-      console.log("WebSocket connected");
-    };
+    // Build WebSocket URL with token as query param
+    const wsUrl = token
+      ? `${wsProtocol}://${wsHost}${url}?token=${token}`
+      : `${wsProtocol}://${wsHost}${url}`;
 
-    wsRef.current.onclose = () => {
-      setIsConnected(false);
-      console.log("WebSocket disconnected");
-    };
-
-    wsRef.current.onerror = (error) => {
-      console.error("WebSocket error:", error);
-    };
-
-    wsRef.current.onmessage = (event) => {
+    const connect = () => {
       try {
-        const message: WebSocketMessage = JSON.parse(event.data);
-        setLastMessage(message);
-        setMessages((prev) => [...prev, message]);
+        wsRef.current = new WebSocket(wsUrl);
+
+        wsRef.current.onopen = () => {
+          setIsConnected(true);
+
+          // Clear any pending reconnect
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+            reconnectTimeoutRef.current = null;
+          }
+        };
+
+        wsRef.current.onclose = (event) => {
+          setIsConnected(false);
+
+          // Auto-reconnect after 3 seconds if not a normal close
+          if (event.code !== 1000) {
+            reconnectTimeoutRef.current = setTimeout(() => {
+              connect();
+            }, 3000);
+          }
+        };
+
+        wsRef.current.onerror = (error) => {
+          console.error("WebSocket error:", error);
+        };
+
+        wsRef.current.onmessage = (event) => {
+          try {
+            const message: WebSocketMessage = JSON.parse(event.data);
+            setLastMessage(message);
+            setMessages((prev) => [...prev, message]);
+          } catch (error) {
+            console.error("Failed to parse WebSocket message:", error);
+          }
+        };
       } catch (error) {
-        console.error("Failed to parse WebSocket message:", error);
+        console.error("Failed to create WebSocket connection:", error);
       }
     };
 
+    connect();
+
     return () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
       if (wsRef.current) {
         wsRef.current.close();
       }
     };
-  }, [url]);
+  }, [url, token]);
 
   const sendMessage = (message: any) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -60,10 +91,15 @@ export function useWebSocket(url: string) {
     }
   };
 
+  const sendPing = () => {
+    sendMessage("ping");
+  };
+
   return {
     isConnected,
     lastMessage,
     messages,
     sendMessage,
+    sendPing,
   };
 }

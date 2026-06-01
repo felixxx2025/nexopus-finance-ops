@@ -136,7 +136,7 @@ def _extract_json(raw: str) -> dict[str, Any]:
         return {}
 
 
-def audit_entries(
+async def audit_entries(
     lancamentos: list[dict[str, Any]],
     dre: dict[str, Any] | None = None,
     balanco: dict[str, Any] | None = None,
@@ -175,10 +175,10 @@ def audit_entries(
     ]
 
     try:
-        raw = chat_completion(
-            url=COPILOT_CHAT_URL,
-            model=MODELS["classifier"],  # claude-sonnet-4.6
+        raw = await chat_completion(
             messages=messages,
+            model=MODELS["classifier"],
+            endpoint=COPILOT_CHAT_URL,
             temperature=0.1,
             max_tokens=3000,
         )

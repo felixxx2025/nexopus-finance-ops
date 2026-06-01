@@ -196,7 +196,7 @@ def chat_completion(
         raise RuntimeError(f"Resposta inesperada da API: {data}") from exc
 
 
-def embed(
+async def embed(
     texts: list[str],
     model: str = MODELS["embedding"],
     *,
@@ -204,7 +204,7 @@ def embed(
     input_type: str = "query",
 ) -> list[list[float]]:
     """
-    Gera embeddings para uma lista de textos.
+    Gera embeddings assíncrono para uma lista de textos.
 
     Args:
         texts: Lista de strings para embedding.
@@ -224,7 +224,7 @@ def embed(
         payload["input_type"] = input_type
 
     logger.debug("embed → model=%s texts=%d endpoint=%s", model, len(texts), endpoint)
-    data = _retry_request("POST", endpoint, payload)
+    data = await _retry_request("POST", endpoint, payload)
 
     try:
         sorted_data = sorted(data["data"], key=lambda x: x["index"])

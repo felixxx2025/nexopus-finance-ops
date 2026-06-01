@@ -12,7 +12,7 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
             staleTime: 5 * 60 * 1000, // 5 minutes
             refetchOnWindowFocus: false,
             retry: 1,
-            cacheTime: 10 * 60 * 1000, // 10 minutes
+            gcTime: 10 * 60 * 1000, // 10 minutes (renamed from cacheTime)
           },
           mutations: {
             retry: 1,

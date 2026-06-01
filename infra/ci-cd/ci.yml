@@ -120,7 +120,7 @@ jobs:
   docker-build:
     name: Docker — Build & Push Images
     runs-on: ubuntu-latest
-    needs: [api-lint-test, web-lint-build]
+    needs: [api-lint-test, web-lint-build, e2e-tests]
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
     permissions:
       contents: read

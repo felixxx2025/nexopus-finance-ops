@@ -66,7 +66,7 @@ export default function Review() {
 
   useEffect(() => {
     if (!selectedCompanyId) { setLoading(false); return; }
-    fetchPending(selectedCompanyId).then((e) => { setEntries(e); setLoading(false); });
+    fetchPending(selectedCompanyId).then((entries) => { setEntries(entries); setLoading(false); });
   }, [selectedCompanyId]);
 
   function showToast(msg: string, type: "success" | "error") {

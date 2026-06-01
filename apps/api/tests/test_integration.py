@@ -14,7 +14,11 @@ BASE_URL = "http://localhost:8000"
 @pytest.fixture
 def auth_headers():
     """Provide valid Authorization header for tests (mocked token)."""
-    return {"Authorization": "Bearer test-token-admin"}
+    import os
+    os.environ.setdefault("SECRET_KEY", "test-secret-key-for-unit-tests-only-32chars!!")
+    from apps.api.main import _create_access_token
+    token, _ = _create_access_token("admin", "admin")
+    return {"Authorization": f"Bearer {token}"}
 
 
 # ─── Health ─────────────────────────────────────────────────────────────────
@@ -79,7 +83,7 @@ def test_forecast_endpoint_returns_200(auth_headers):
     }
 
     async def _run():
-        with patch("services.ai_engine.agent_predictor.call_ai", new=AsyncMock(return_value=json.dumps(mock_forecast))):
+        with patch("services.ai_engine.agent_predictor.chat_completion", new=AsyncMock(return_value=json.dumps(mock_forecast))):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 resp = await client.post("/ai/forecast", json=payload, headers=auth_headers)
         assert resp.status_code == 200
@@ -116,7 +120,7 @@ def test_audit_endpoint_returns_200(auth_headers):
     }
 
     async def _run():
-        with patch("services.ai_engine.agent_auditor.call_ai", new=AsyncMock(return_value=json.dumps(mock_audit))):
+        with patch("services.ai_engine.agent_auditor.chat_completion", new=AsyncMock(return_value=json.dumps(mock_audit))):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 resp = await client.post("/ai/audit", json=payload, headers=auth_headers)
         assert resp.status_code == 200
@@ -155,7 +159,7 @@ def test_reconcile_endpoint_returns_200(auth_headers):
     }
 
     async def _run():
-        with patch("services.ai_engine.agent_reconciler.call_ai", new=AsyncMock(return_value=json.dumps(mock_reconcile))):
+        with patch("services.ai_engine.agent_reconciler.chat_completion", new=AsyncMock(return_value=json.dumps(mock_reconcile))):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 resp = await client.post("/ai/reconcile", json=payload, headers=auth_headers)
         assert resp.status_code == 200
@@ -175,7 +179,7 @@ def test_login_invalid_credentials():
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             resp = await client.post(
                 "/auth/token",
-                data={"username": "nonexistent@test.com", "password": "wrong"},
+                json={"username": "nonexistent@test.com", "password": "wrong"},
             )
         assert resp.status_code == 401
 

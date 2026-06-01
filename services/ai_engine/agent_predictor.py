@@ -59,7 +59,7 @@ Retorne EXCLUSIVAMENTE um JSON válido:
 """
 
 
-def _aggregate_by_month(lancamentos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _aggregate_by_month(lancamentos: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Agrega lançamentos por mês calculando receita e despesa total."""
     monthly: dict[str, dict[str, Decimal]] = {}
     for l in lancamentos:
@@ -76,15 +76,14 @@ def _aggregate_by_month(lancamentos: list[dict[str, Any]]) -> list[dict[str, Any
         elif tipo == "despesa":
             monthly[mes]["despesa"] += valor
 
-    return [
-        {
-            "mes": k,
+    return {
+        k: {
             "receita": float(v["receita"]),
             "despesa": float(v["despesa"]),
             "resultado": float(v["receita"] - v["despesa"]),
         }
         for k, v in sorted(monthly.items())
-    ]
+    }
 
 
 def _simple_trend(values: list[float]) -> str:
@@ -110,7 +109,7 @@ def _extract_json(raw: str) -> dict[str, Any]:
         return {}
 
 
-def predict_cashflow(
+async def predict_cashflow(
     lancamentos: list[dict[str, Any]],
     company_name: str = "",
 ) -> dict[str, Any]:
@@ -128,8 +127,18 @@ def predict_cashflow(
 
     if not monthly:
         return {
-            "error": "Dados insuficientes para gerar previsão.",
+            "cenarios": {
+                "otimista": {"receita_projetada": 0, "despesa_projetada": 0, "resultado_liquido": 0},
+                "base": {"receita_projetada": 0, "despesa_projetada": 0, "resultado_liquido": 0},
+                "pessimista": {"receita_projetada": 0, "despesa_projetada": 0, "resultado_liquido": 0},
+            },
+            "tendencia_receita": "estavel",
+            "tendencia_despesa": "estavel",
+            "recomendacoes": [],
+            "confianca": 0.0,
+            "narrativa": "Dados insuficientes para gerar previsão.",
             "monthly_data": [],
+            "lancamentos_processados": 0,
         }
 
     user_content = json.dumps(
@@ -147,52 +156,37 @@ def predict_cashflow(
     ]
 
     try:
-        raw = chat_completion(
-            url=COPILOT_CHAT_URL,
-            model=MODELS["classifier"],  # claude-sonnet-4.6
+        raw = await chat_completion(
             messages=messages,
+            model=MODELS["classifier"],
+            endpoint=COPILOT_CHAT_URL,
             temperature=0.2,
             max_tokens=2000,
         )
         result = _extract_json(raw)
-        result["monthly_data"] = monthly
+        result["monthly_data"] = list(monthly.values()) if isinstance(monthly, dict) else monthly
         result["lancamentos_processados"] = len(lancamentos)
         return result
     except Exception as e:
         logger.error("Agent Predictor falhou: %s", e)
         # Fallback estatístico simples
-        receitas = [m["receita"] for m in monthly]
-        despesas = [m["despesa"] for m in monthly]
+        monthly_list = list(monthly.values()) if isinstance(monthly, dict) else monthly
+        receitas = [m["receita"] for m in monthly_list]
+        despesas = [m["despesa"] for m in monthly_list]
         avg_rec = sum(receitas) / len(receitas) if receitas else 0
         avg_desp = sum(despesas) / len(despesas) if despesas else 0
         return {
-            "tendencia": {
-                "receita": _simple_trend(receitas),
-                "despesa": _simple_trend(despesas),
-                "margem_liquida_media": round((avg_rec - avg_desp) / max(avg_rec, 1) * 100, 2),
+            "cenarios": {
+                "otimista": {"receita_projetada": avg_rec * 1.1, "despesa_projetada": avg_desp * 0.95, "resultado_liquido": avg_rec * 1.1 - avg_desp * 0.95},
+                "base": {"receita_projetada": avg_rec, "despesa_projetada": avg_desp, "resultado_liquido": avg_rec - avg_desp},
+                "pessimista": {"receita_projetada": avg_rec * 0.9, "despesa_projetada": avg_desp * 1.05, "resultado_liquido": avg_rec * 0.9 - avg_desp * 1.05},
             },
-            "projecao": {
-                "30_dias": {
-                    "otimista": {"receita": avg_rec * 1.1, "despesa": avg_desp * 0.95, "resultado": avg_rec * 1.1 - avg_desp * 0.95},
-                    "base": {"receita": avg_rec, "despesa": avg_desp, "resultado": avg_rec - avg_desp},
-                    "pessimista": {"receita": avg_rec * 0.9, "despesa": avg_desp * 1.05, "resultado": avg_rec * 0.9 - avg_desp * 1.05},
-                },
-                "60_dias": {
-                    "otimista": {"receita": avg_rec * 1.15, "despesa": avg_desp * 0.93, "resultado": avg_rec * 1.15 - avg_desp * 0.93},
-                    "base": {"receita": avg_rec, "despesa": avg_desp, "resultado": avg_rec - avg_desp},
-                    "pessimista": {"receita": avg_rec * 0.85, "despesa": avg_desp * 1.08, "resultado": avg_rec * 0.85 - avg_desp * 1.08},
-                },
-                "90_dias": {
-                    "otimista": {"receita": avg_rec * 1.20, "despesa": avg_desp * 0.90, "resultado": avg_rec * 1.20 - avg_desp * 0.90},
-                    "base": {"receita": avg_rec, "despesa": avg_desp, "resultado": avg_rec - avg_desp},
-                    "pessimista": {"receita": avg_rec * 0.80, "despesa": avg_desp * 1.10, "resultado": avg_rec * 0.80 - avg_desp * 1.10},
-                },
-            },
-            "alertas": ["Previsão estatística — IA indisponível."],
+            "tendencia_receita": _simple_trend(receitas),
+            "tendencia_despesa": _simple_trend(despesas),
             "recomendacoes": [],
             "confianca": 0.5,
             "narrativa": "Previsão gerada com base estatística simples (fallback).",
-            "monthly_data": monthly,
+            "monthly_data": list(monthly.values()) if isinstance(monthly, dict) else monthly,
             "lancamentos_processados": len(lancamentos),
             "fallback": True,
         }

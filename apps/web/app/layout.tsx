@@ -1,16 +1,31 @@
+import { cn } from "@/lib/utils";
 import type { Metadata } from "next";
-import { Inter, Geist } from "next/font/google";
+import { Geist, Inter } from "next/font/google";
 import "../styles/globals.css";
 import { Providers } from "./providers";
-import { cn } from "@/lib/utils";
 
-const geist = Geist({subsets:['latin'],variable:'--font-sans'});
+const geist = Geist({ subsets: ['latin'], variable: '--font-sans' });
 
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Nexopus Finance Ops",
   description: "Plataforma corporativa de finanças com IA",
+  manifest: "/manifest.json",
+  themeColor: "#3b82f6",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Nexopus",
+  },
+  formatDetection: {
+    telephone: false,
+  },
+  viewport: {
+    width: "device-width",
+    initialScale: 1,
+    maximumScale: 1,
+  },
 };
 
 export default function RootLayout({

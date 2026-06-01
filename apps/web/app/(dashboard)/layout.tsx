@@ -12,8 +12,9 @@ import {
 } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { seedCompanyAccounts } from "@/lib/api";
-import { Database, Loader2, Moon, Search, Sun } from "lucide-react";
+import { Database, Loader2, Menu, Moon, Search, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
 import { useState } from "react";
@@ -24,6 +25,15 @@ const Notifications = dynamic(
   () => import("@/components/Notifications").then((mod) => ({ default: mod.Notifications })),
   {
     loading: () => <div className="h-10 w-10" />,
+    ssr: false,
+  }
+);
+
+// Lazy load FloatingChat component
+const FloatingChat = dynamic(
+  () => import("@/components/FloatingChat"),
+  {
+    loading: () => <div className="h-14 w-14" />,
     ssr: false,
   }
 );
@@ -70,6 +80,7 @@ export default function DashboardLayout({
       <Sidebar />
       <CommandPalette />
       <Toaster position="top-right" richColors closeButton />
+      <FloatingChat />
 
       {/* Main content area with margin for sidebar */}
       <div className="lg:ml-64">

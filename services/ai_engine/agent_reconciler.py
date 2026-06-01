@@ -80,7 +80,7 @@ def _normalize_description(desc: str) -> str:
 def _simple_match(
     bank_entries: list[dict[str, Any]],
     accounting_entries: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     """Match simples por valor exato + data próxima como fallback."""
     matches = []
     used_accounting = set()
@@ -152,7 +152,7 @@ def _simple_match(
                 "observacao": "Lançamento sem correspondência no extrato bancário.",
             })
 
-    return matches
+    return {"matches": matches}
 
 
 def _build_summary(matches: list[dict[str, Any]], bank_total: int, contabil_total: int) -> dict:
@@ -184,7 +184,7 @@ def _extract_json(raw: str) -> dict[str, Any]:
         return {}
 
 
-def reconcile(
+async def reconcile(
     bank_entries: list[dict[str, Any]],
     accounting_entries: list[dict[str, Any]],
     company_name: str = "",
@@ -216,10 +216,10 @@ def reconcile(
     ]
 
     try:
-        raw = chat_completion(
-            url=AZURE_CHAT_URL,
-            model=MODELS["parser"],  # LLaMA 3.1 405B
+        raw = await chat_completion(
             messages=messages,
+            model=MODELS["parser"],
+            endpoint=AZURE_CHAT_URL,
             temperature=0.1,
             max_tokens=4000,
         )
@@ -233,7 +233,8 @@ def reconcile(
     except Exception as e:
         logger.error("Agent Reconciler LLM falhou (%s) — usando fallback local.", e)
         # Fallback: algoritmo local
-        matches = _simple_match(bank_entries, accounting_entries)
+        match_result = _simple_match(bank_entries, accounting_entries)
+        matches = match_result["matches"]
         summary = _build_summary(matches, len(bank_entries), len(accounting_entries))
         pendentes_banco = [m for m in matches if m["status"] == "APENAS_BANCO"]
         alertas = []

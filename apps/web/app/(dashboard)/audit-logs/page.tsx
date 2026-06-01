@@ -156,7 +156,7 @@ export default function AuditLogsPage() {
                   <TableHead className="text-gray-400">Usuário</TableHead>
                   <TableHead className="text-gray-400">Ação</TableHead>
                   <TableHead className="text-gray-400">Entidade</TableHead>
-                  <TableHead className="text-gray-400">Detalhes</TableHead>
+                  <TableHead className="text-gray-400">Empresa</TableHead>
                   <TableHead className="text-gray-400">IP Address</TableHead>
                 </TableRow>
               </TableHeader>

@@ -4,8 +4,9 @@
  */
 "use client";
 
-import { fetchForecast } from "@/lib/api";
-import { useState } from "react";
+import { useCompany } from "@/contexts/CompanyContext";
+import { fetchApprovedEntries, fetchForecast } from "@/lib/api";
+import { useEffect, useState } from "react";
 import {
   Area,
   AreaChart,

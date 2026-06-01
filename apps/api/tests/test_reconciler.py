@@ -49,7 +49,7 @@ async def test_reconcile_success(bank_entries, accounting_entries):
     }
 
     with patch(
-        "services.ai_engine.agent_reconciler.call_ai",
+        "services.ai_engine.agent_reconciler.chat_completion",
         new=AsyncMock(return_value=json.dumps(mock_response)),
     ):
         result = await reconcile(bank_entries, accounting_entries, "Empresa Teste")
@@ -65,7 +65,7 @@ async def test_reconcile_fallback(bank_entries, accounting_entries):
     from services.ai_engine.agent_reconciler import reconcile
 
     with patch(
-        "services.ai_engine.agent_reconciler.call_ai",
+        "services.ai_engine.agent_reconciler.chat_completion",
         new=AsyncMock(side_effect=Exception("timeout")),
     ):
         result = await reconcile(bank_entries, accounting_entries, "Empresa Teste")

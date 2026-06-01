@@ -38,7 +38,7 @@ async def test_predict_cashflow_success(lancamentos_sample):
     }
 
     with patch(
-        "services.ai_engine.agent_predictor.call_ai",
+        "services.ai_engine.agent_predictor.chat_completion",
         new=AsyncMock(return_value=json.dumps(mock_response)),
     ):
         result = await predict_cashflow(lancamentos_sample, "Empresa Teste")
@@ -55,7 +55,7 @@ async def test_predict_cashflow_fallback_on_ai_error(lancamentos_sample):
     from services.ai_engine.agent_predictor import predict_cashflow
 
     with patch(
-        "services.ai_engine.agent_predictor.call_ai",
+        "services.ai_engine.agent_predictor.chat_completion",
         new=AsyncMock(side_effect=Exception("AI timeout")),
     ):
         result = await predict_cashflow(lancamentos_sample, "Empresa Teste")
@@ -83,6 +83,7 @@ def test_aggregate_by_month(lancamentos_sample):
     assert "2026-01" in monthly
     assert monthly["2026-01"]["receita"] == 85000
     assert monthly["2026-01"]["despesa"] == 42000
+    assert isinstance(monthly, dict)
 
 
 def test_simple_trend():

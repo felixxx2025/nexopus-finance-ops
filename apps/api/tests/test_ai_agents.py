@@ -16,7 +16,7 @@ import os
 import tempfile
 import uuid
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 
@@ -122,7 +122,8 @@ class TestGitHubAIClient:
                     model="gpt-5.2",
                 )
 
-    def test_embed_success(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_embed_success(self, monkeypatch):
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
         mock_response = {
             "data": [
@@ -131,13 +132,14 @@ class TestGitHubAIClient:
             ]
         }
         from services.ai_engine import github_ai_client
-        with patch.object(github_ai_client, "_retry_request", return_value=mock_response):
-            result = github_ai_client.embed(["texto1", "texto2"])
+        with patch.object(github_ai_client, "_retry_request", AsyncMock(return_value=mock_response)):
+            result = await github_ai_client.embed(["texto1", "texto2"])
         assert len(result) == 2
         assert result[0] == [0.1, 0.2, 0.3]
         assert result[1] == [0.4, 0.5, 0.6]
 
-    def test_embed_sorted_by_index(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_embed_sorted_by_index(self, monkeypatch):
         """Garante que embeddings são retornados na ordem correta independente da API."""
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
         mock_response = {
@@ -147,8 +149,8 @@ class TestGitHubAIClient:
             ]
         }
         from services.ai_engine import github_ai_client
-        with patch.object(github_ai_client, "_retry_request", return_value=mock_response):
-            result = github_ai_client.embed(["a", "b"])
+        with patch.object(github_ai_client, "_retry_request", AsyncMock(return_value=mock_response)):
+            result = await github_ai_client.embed(["a", "b"])
         assert result[0] == [0.1, 0.2]
         assert result[1] == [0.4, 0.5]
 
@@ -287,7 +289,7 @@ class TestAgentParser:
 
         assert len(result["lancamentos"]) == 1
 
-    def test_parse_raises_on_invalid_json(self, tmp_path, monkeypatch):
+    def test_parse_uses_fallback_on_invalid_json(self, tmp_path, monkeypatch):
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
         txt = tmp_path / "doc.txt"
         txt.write_text("dados", encoding="utf-8")
@@ -295,8 +297,10 @@ class TestAgentParser:
         from services.ai_engine import agent_parser
 
         with patch.object(agent_parser, "chat_completion", return_value="texto inválido sem json"):
-            with pytest.raises(ValueError, match="JSON inválido"):
-                agent_parser.parse_document(str(txt))
+            result = agent_parser.parse_document(str(txt))
+            # Deve usar fallback em vez de levantar exceção
+            assert "_ai_control" in result
+            assert result["_ai_control"]["decision"] == "reject"
 
     def test_parse_raises_on_unsupported_extension(self, tmp_path, monkeypatch):
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")

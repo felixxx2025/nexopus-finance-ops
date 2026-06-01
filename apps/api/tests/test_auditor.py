@@ -44,7 +44,7 @@ async def test_audit_entries_success(lancamentos_normal):
     }
 
     with patch(
-        "services.ai_engine.agent_auditor.call_ai",
+        "services.ai_engine.agent_auditor.chat_completion",
         new=AsyncMock(return_value=json.dumps(mock_response)),
     ):
         result = await audit_entries(lancamentos_normal, company_name="Empresa Teste")
@@ -71,7 +71,7 @@ async def test_audit_fallback_on_error(lancamentos_normal):
     from services.ai_engine.agent_auditor import audit_entries
 
     with patch(
-        "services.ai_engine.agent_auditor.call_ai",
+        "services.ai_engine.agent_auditor.chat_completion",
         new=AsyncMock(side_effect=Exception("LLM unavailable")),
     ):
         result = await audit_entries(lancamentos_normal, company_name="Teste")
@@ -106,7 +106,7 @@ async def test_audit_high_risk_score(lancamentos_with_anomaly):
     }
 
     with patch(
-        "services.ai_engine.agent_auditor.call_ai",
+        "services.ai_engine.agent_auditor.chat_completion",
         new=AsyncMock(return_value=json.dumps(mock_response)),
     ):
         result = await audit_entries(lancamentos_with_anomaly, company_name="Teste")

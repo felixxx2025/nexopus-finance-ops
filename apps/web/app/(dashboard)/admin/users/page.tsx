@@ -17,15 +17,16 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { fetchUsers } from "@/lib/api";
 import { Ban, Edit, Loader2, Shield, UserPlus } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 const API_URL = "/api";
 
 interface User {
   username: string;
   email?: string;
+  role: string;
   is_active: boolean;
   created_at: string;
-  last_login?: string;
 }
 
 export default function AdminUsersPage() {
@@ -376,6 +377,19 @@ export default function AdminUsersPage() {
                       <TableCell>
                         <Badge
                           variant="outline"
+                          className={`border ${user.role === "admin"
+                            ? "bg-purple-900/40 text-purple-400 border-purple-700"
+                            : user.role === "analista"
+                              ? "bg-blue-900/40 text-blue-400 border-blue-700"
+                              : "bg-gray-900/40 text-gray-400 border-gray-700"
+                            }`}
+                        >
+                          {user.role}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
                           className={`border ${user.is_active
                             ? "bg-green-900/40 text-green-400 border-green-700"
                             : "bg-red-900/40 text-red-400 border-red-700"
@@ -385,9 +399,6 @@ export default function AdminUsersPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-gray-400">{formatDate(user.created_at)}</TableCell>
-                      <TableCell className="text-gray-400">
-                        {user.last_login ? formatDate(user.last_login) : "Nunca"}
-                      </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Button

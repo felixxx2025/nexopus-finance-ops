@@ -4,22 +4,31 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  createKnowledgeArticle,
+  deleteKnowledgeArticle,
   fetchAccountTemplates,
+  fetchKnowledgeArticle,
   fetchKnowledgeArticles,
   fetchReportTemplates,
   searchKnowledge,
+  updateKnowledgeArticle,
+  uploadKnowledgePDF,
 } from "@/lib/api";
-import { BookOpen, FileText, Lightbulb, Loader2, Search } from "lucide-react";
+import { BookOpen, FileText, Lightbulb, Loader2, Pencil, Plus, Search, Trash2, Upload, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 interface Article {
   id: string;
   title: string;
   category: string;
+  subcategory?: string;
   content: string;
   tags: string[];
+  source?: string;
+  source_url?: string;
   created_at: string;
 }
 
@@ -38,6 +47,19 @@ export default function KnowledgePage() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingArticle, setEditingArticle] = useState<Article | null>(null);
+  const [formData, setFormData] = useState({
+    title: "",
+    content: "",
+    category: "conceito",
+    subcategory: "",
+    tags: "",
+    source: "",
+    source_url: "",
+  });
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
 
   useEffect(() => {
     loadKnowledge();
@@ -86,6 +108,119 @@ export default function KnowledgePage() {
     }
   };
 
+  const handleCreate = async () => {
+    try {
+      setIsLoading(true);
+      const tags = formData.tags.split(",").map(t => t.trim()).filter(t => t);
+      await createKnowledgeArticle({
+        title: formData.title,
+        content: formData.content,
+        category: formData.category,
+        subcategory: formData.subcategory || undefined,
+        tags: tags.length > 0 ? tags : undefined,
+        source: formData.source || undefined,
+        source_url: formData.source_url || undefined,
+      });
+      setIsModalOpen(false);
+      resetForm();
+      loadKnowledge();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao criar artigo");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!editingArticle) return;
+    try {
+      setIsLoading(true);
+      const tags = formData.tags.split(",").map(t => t.trim()).filter(t => t);
+      await updateKnowledgeArticle(editingArticle.id, {
+        title: formData.title,
+        content: formData.content,
+        category: formData.category,
+        subcategory: formData.subcategory || undefined,
+        tags: tags.length > 0 ? tags : undefined,
+        source: formData.source || undefined,
+        source_url: formData.source_url || undefined,
+      });
+      setIsModalOpen(false);
+      resetForm();
+      loadKnowledge();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao atualizar artigo");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Tem certeza que deseja excluir este artigo?")) return;
+    try {
+      setIsLoading(true);
+      await deleteKnowledgeArticle(id);
+      loadKnowledge();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao excluir artigo");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleEdit = async (article: Article) => {
+    try {
+      const fullArticle = await fetchKnowledgeArticle(article.id);
+      setEditingArticle(article);
+      setFormData({
+        title: fullArticle.title,
+        content: fullArticle.content,
+        category: fullArticle.category,
+        subcategory: fullArticle.subcategory || "",
+        tags: fullArticle.tags?.join(", ") || "",
+        source: fullArticle.source || "",
+        source_url: fullArticle.source_url || "",
+      });
+      setIsModalOpen(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao carregar artigo");
+    }
+  };
+
+  const handleUploadPDF = async () => {
+    if (!uploadFile) return;
+    try {
+      setIsUploading(true);
+      await uploadKnowledgePDF(uploadFile, formData.title || uploadFile.name, formData.category);
+      setIsModalOpen(false);
+      resetForm();
+      loadKnowledge();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao fazer upload de PDF");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      title: "",
+      content: "",
+      category: "conceito",
+      subcategory: "",
+      tags: "",
+      source: "",
+      source_url: "",
+    });
+    setEditingArticle(null);
+    setUploadFile(null);
+  };
+
+  const openModal = () => {
+    resetForm();
+    setIsModalOpen(true);
+  };
+
   const filteredArticles = articles.filter((article) => {
     const matchesCategory =
       selectedCategory === "all" || article.category === selectedCategory;
@@ -101,10 +236,16 @@ export default function KnowledgePage() {
             Artigos, templates e documentação do sistema
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={loadKnowledge}>
-          <Loader2 className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-          Atualizar
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={loadKnowledge}>
+            <Loader2 className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
+            Atualizar
+          </Button>
+          <Button variant="default" size="sm" onClick={openModal}>
+            <Plus className="h-4 w-4 mr-2" />
+            Novo Artigo
+          </Button>
+        </div>
       </div>
 
       <Card className="bg-gray-900 border-gray-800">
@@ -174,13 +315,18 @@ export default function KnowledgePage() {
                                 ))}
                               </div>
                             </div>
+                            <div className="flex gap-2">
+                              <Button variant="ghost" size="sm" onClick={() => handleEdit(article)}>
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="sm" onClick={() => handleDelete(article.id)}>
+                                <Trash2 className="h-4 w-4 text-red-400" />
+                              </Button>
+                            </div>
                           </div>
                         </CardHeader>
                         <CardContent>
                           <p className="text-gray-400 text-sm">{article.content}</p>
-                          <Button variant="outline" size="sm" className="mt-3">
-                            Ler mais
-                          </Button>
                         </CardContent>
                       </Card>
                     ))
@@ -223,6 +369,145 @@ export default function KnowledgePage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Modal for Create/Edit/Upload */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <Card className="bg-gray-900 border-gray-800 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-white">
+                  {editingArticle ? "Editar Artigo" : "Novo Artigo"}
+                </CardTitle>
+                <Button variant="ghost" size="sm" onClick={() => setIsModalOpen(false)}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Tabs defaultValue="manual" className="w-full">
+                <TabsList className="bg-gray-800 border-gray-700 w-full">
+                  <TabsTrigger value="manual" className="data-[state=active]:bg-gray-700 flex-1">
+                    Manual
+                  </TabsTrigger>
+                  <TabsTrigger value="upload" className="data-[state=active]:bg-gray-700 flex-1">
+                    <Upload className="h-4 w-4 mr-2" />
+                    Upload PDF
+                  </TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="manual" className="space-y-4 mt-4">
+                  <div>
+                    <Label className="text-gray-300">Título</Label>
+                    <Input
+                      value={formData.title}
+                      onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                      className="bg-gray-800 border-gray-700 text-white mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-gray-300">Categoria</Label>
+                    <Input
+                      value={formData.category}
+                      onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                      className="bg-gray-800 border-gray-700 text-white mt-1"
+                      placeholder="conceito, norma, glossario, etc."
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-gray-300">Subcategoria (opcional)</Label>
+                    <Input
+                      value={formData.subcategory}
+                      onChange={(e) => setFormData({ ...formData, subcategory: e.target.value })}
+                      className="bg-gray-800 border-gray-700 text-white mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-gray-300">Conteúdo</Label>
+                    <textarea
+                      value={formData.content}
+                      onChange={(e) => setFormData({ ...formData, content: e.target.value })}
+                      className="bg-gray-800 border-gray-700 text-white mt-1 min-h-[200px] w-full rounded-lg p-3"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-gray-300">Tags (separadas por vírgula)</Label>
+                    <Input
+                      value={formData.tags}
+                      onChange={(e) => setFormData({ ...formData, tags: e.target.value })}
+                      className="bg-gray-800 border-gray-700 text-white mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-gray-300">Fonte (opcional)</Label>
+                    <Input
+                      value={formData.source}
+                      onChange={(e) => setFormData({ ...formData, source: e.target.value })}
+                      className="bg-gray-800 border-gray-700 text-white mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-gray-300">URL da Fonte (opcional)</Label>
+                    <Input
+                      value={formData.source_url}
+                      onChange={(e) => setFormData({ ...formData, source_url: e.target.value })}
+                      className="bg-gray-800 border-gray-700 text-white mt-1"
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2 pt-4">
+                    <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+                      Cancelar
+                    </Button>
+                    <Button onClick={editingArticle ? handleUpdate : handleCreate} disabled={isLoading}>
+                      {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                      {editingArticle ? "Atualizar" : "Criar"}
+                    </Button>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="upload" className="space-y-4 mt-4">
+                  <div>
+                    <Label className="text-gray-300">Arquivo PDF</Label>
+                    <Input
+                      type="file"
+                      accept=".pdf"
+                      onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                      className="bg-gray-800 border-gray-700 text-white mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-gray-300">Título (opcional)</Label>
+                    <Input
+                      value={formData.title}
+                      onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                      className="bg-gray-800 border-gray-700 text-white mt-1"
+                      placeholder="Usará nome do arquivo se vazio"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-gray-300">Categoria</Label>
+                    <Input
+                      value={formData.category}
+                      onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                      className="bg-gray-800 border-gray-700 text-white mt-1"
+                      placeholder="conceito, norma, glossario, etc."
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2 pt-4">
+                    <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+                      Cancelar
+                    </Button>
+                    <Button onClick={handleUploadPDF} disabled={!uploadFile || isUploading}>
+                      {isUploading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                      Upload
+                    </Button>
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }
