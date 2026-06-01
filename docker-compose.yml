@@ -117,6 +117,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "celery", "-A", "services.worker.tasks:celery", "inspect", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     networks:
       - nexopus-internal
 
@@ -134,6 +140,31 @@ services:
         condition: service_healthy
     networks:
       - nexopus-internal
+
+  # ── Ollama (Local LLM Server) ───────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: nexopus-ollama
+    volumes:
+      - ollama-data:/root/.ollama
+      - ./infra/docker/entrypoint-ollama.sh:/entrypoint-ollama.sh:ro
+    environment:
+      - OLLAMA_KEEP_ALIVE=30m
+      - OLLAMA_NUM_THREAD=8
+    ports:
+      - "11434:11434"
+    entrypoint: ["/bin/bash", "/entrypoint-ollama.sh"]
+    networks:
+      - nexopus-internal
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 12G
+        reservations:
+          cpus: '4'
+          memory: 8G
 
   # ── Celery Beat (scheduler) ──────────────────────────────────────────────────
   beat:
@@ -249,6 +280,8 @@ services:
     restart: unless-stopped
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
+    volumes:
+      - jaeger_data:/jaeger
     # Sem ports expostos — acessível via rede interna ou proxy
     networks:
       - nexopus-internal
@@ -260,6 +293,7 @@ volumes:
   grafana_data:
   loki_data:
   jaeger_data:
+  ollama-data:
 
 networks:
   nexopus-internal:
