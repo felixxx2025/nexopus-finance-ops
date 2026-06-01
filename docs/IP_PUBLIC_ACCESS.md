@@ -11,26 +11,34 @@
 ✓ API acessível via IP público (porta 8000)
 ✓ Frontend acessível via IP público (porta 3000)
 ✓ CORS configurado para permitir IP público
+✓ Login via API funcionando com IP público
 
 ## Configuração para Acesso Externo
 
-### Opção 1: Criar arquivo .env.local
-Crie o arquivo `.env.local` na raiz do projeto com:
-
+### Opção 1: Usar script automatizado (RECOMENDADO)
 ```bash
-NEXT_PUBLIC_API_URL=http://195.182.200.216:8000
+./scripts/start-with-public-ip.sh
 ```
+
+Este script:
+- Detecta automaticamente o IP público
+- Configura a variável de ambiente
+- Inicia os containers com a configuração correta
 
 ### Opção 2: Passar variável no comando docker-compose
 ```bash
-NEXT_PUBLIC_API_URL=http://195.182.200.216:8000 docker compose up -d web
+NEXT_PUBLIC_API_URL=http://195.182.200.216:8000 docker compose up -d --build web
 ```
 
 ### Opção 3: Usar localhost (acesso local)
 Mantenha a configuração padrão para acesso local:
 ```bash
-NEXT_PUBLIC_API_URL=http://localhost:8000
+docker compose up -d
 ```
+
+## Importante: Persistência da Configuração
+
+A variável `NEXT_PUBLIC_API_URL` precisa ser definida a cada reinício do container web. Use o script `start-with-public-ip.sh` para garantir que a configuração seja aplicada sempre.
 
 ## Notas Importantes
 
