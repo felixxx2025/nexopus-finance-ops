@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     s3_bucket: str = "ledger-docs"
 
     # ── CORS ──────────────────────────────────────────────────────────────
-    allowed_origins: str = "http://localhost:3000"
+    allowed_origins: str = "http://localhost:3000,http://localhost:8000"
 
     # ── Sentry ────────────────────────────────────────────────────────────
     sentry_dsn: Optional[str] = None

@@ -4,7 +4,7 @@
  * O token JWT nunca é armazenado em JavaScript — trafega apenas via cookie httpOnly.
  */
 
-const API_URL = "/api";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const { headers: extraHeaders, ...rest } = options;
