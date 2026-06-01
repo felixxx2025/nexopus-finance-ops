@@ -15,6 +15,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -32,6 +33,9 @@ class Base(DeclarativeBase):
 
 class Company(Base):
     __tablename__ = "companies"
+    __table_args__ = (
+        Index("idx_companies_name", "name"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -46,7 +50,11 @@ class Company(Base):
 
 class Account(Base):
     __tablename__ = "accounts"
-    __table_args__ = (UniqueConstraint("company_id", "code"),)
+    __table_args__ = (
+        UniqueConstraint("company_id", "code"),
+        Index("idx_accounts_company_id", "company_id"),
+        Index("idx_accounts_code", "code"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
@@ -64,6 +72,12 @@ class Account(Base):
 
 class JournalEntry(Base):
     __tablename__ = "journal_entries"
+    __table_args__ = (
+        Index("idx_journal_entries_company_id", "company_id"),
+        Index("idx_journal_entries_date", "date"),
+        Index("idx_journal_entries_status", "status"),
+        Index("idx_journal_entries_company_date", "company_id", "date"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
@@ -89,6 +103,10 @@ class JournalEntry(Base):
 
 class JournalItem(Base):
     __tablename__ = "journal_items"
+    __table_args__ = (
+        Index("idx_journal_items_entry_id", "entry_id"),
+        Index("idx_journal_items_account_id", "account_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     entry_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("journal_entries.id", ondelete="CASCADE"), nullable=False)
@@ -106,6 +124,11 @@ class JournalItem(Base):
 
 class Document(Base):
     __tablename__ = "documents"
+    __table_args__ = (
+        Index("idx_documents_company_id", "company_id"),
+        Index("idx_documents_status", "status"),
+        Index("idx_documents_type", "type"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     company_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
@@ -161,6 +184,10 @@ class Report(Base):
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        Index("idx_users_username", "username"),
+        Index("idx_users_email", "email"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     username: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
@@ -196,6 +223,12 @@ class UserCompany(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
+    __table_args__ = (
+        Index("idx_audit_logs_user_id", "user_id"),
+        Index("idx_audit_logs_company_id", "company_id"),
+        Index("idx_audit_logs_action", "action"),
+        Index("idx_audit_logs_created_at", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -214,6 +247,10 @@ class AuditLog(Base):
 
 class KnowledgeArticle(Base):
     __tablename__ = "knowledge_articles"
+    __table_args__ = (
+        Index("idx_knowledge_articles_category", "category"),
+        Index("idx_knowledge_articles_language", "language"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title: Mapped[str] = mapped_column(Text, nullable=False)
@@ -237,6 +274,10 @@ class KnowledgeArticle(Base):
 
 class KnowledgeEmbedding(Base):
     __tablename__ = "knowledge_embeddings"
+    __table_args__ = (
+        Index("idx_knowledge_embeddings_article_id", "article_id"),
+        Index("idx_knowledge_embeddings_model", "model"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     article_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("knowledge_articles.id", ondelete="CASCADE"), nullable=False)
@@ -250,6 +291,10 @@ class KnowledgeEmbedding(Base):
 
 class ReportTemplate(Base):
     __tablename__ = "report_templates"
+    __table_args__ = (
+        Index("idx_report_templates_type", "type"),
+        Index("idx_report_templates_sector", "sector"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -269,6 +314,9 @@ class ReportTemplate(Base):
 
 class AccountTemplate(Base):
     __tablename__ = "account_templates"
+    __table_args__ = (
+        Index("idx_account_templates_sector", "sector"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -286,6 +334,10 @@ class AccountTemplate(Base):
 
 class GlossaryTerm(Base):
     __tablename__ = "glossary_terms"
+    __table_args__ = (
+        Index("idx_glossary_terms_category", "category"),
+        Index("idx_glossary_terms_language", "language"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     term: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
@@ -300,6 +352,10 @@ class GlossaryTerm(Base):
 
 class UseCase(Base):
     __tablename__ = "use_cases"
+    __table_args__ = (
+        Index("idx_use_cases_category", "category"),
+        Index("idx_use_cases_complexity", "complexity"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title: Mapped[str] = mapped_column(Text, nullable=False)
