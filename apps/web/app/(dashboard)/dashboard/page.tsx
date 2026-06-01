@@ -3,6 +3,8 @@
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useCompany } from "@/contexts/CompanyContext";
 import { fetchDRE } from "@/lib/api";
 import { ResponsiveBar } from "@nivo/bar";
@@ -182,7 +184,29 @@ export default function Dashboard() {
       )}
 
       {loading && !kpi ? (
-        <PageSkeleton />
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[...Array(4)].map((_, i) => (
+              <Card key={i} className="bg-gray-900 border-gray-800">
+                <CardHeader className="pb-2">
+                  <Skeleton className="h-4 w-24 bg-gray-800" />
+                </CardHeader>
+                <CardContent>
+                  <Skeleton className="h-8 w-32 bg-gray-800" />
+                  <Skeleton className="h-3 w-20 bg-gray-800 mt-2" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+          <Card className="bg-gray-900 border-gray-800">
+            <CardHeader>
+              <Skeleton className="h-6 w-48 bg-gray-800" />
+            </CardHeader>
+            <CardContent>
+              <Skeleton className="h-64 w-full bg-gray-800" />
+            </CardContent>
+          </Card>
+        </div>
       ) : kpi ? (
         <>
           {/* KPIs Grid */}
