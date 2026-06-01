@@ -17,7 +17,7 @@ import {
 import { Download, Eye, FilePlus, FileSpreadsheet, FileText, Image as ImageIcon, Loader2, Pencil, Search, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
-const API_URL = "/api";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface Document {
   id: string;
