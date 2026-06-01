@@ -66,6 +66,26 @@ export async function me(): Promise<{ username: string }> {
   return request<{ username: string }>("/auth/me");
 }
 
+/** Renova access token usando refresh token. */
+export async function refreshToken(refreshToken: string): Promise<{
+  access_token: string;
+  token_type: string;
+  username: string;
+  role: string;
+}> {
+  return request<{
+    access_token: string;
+    token_type: string;
+    username: string;
+    role: string;
+  }>("/auth/refresh", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${refreshToken}`,
+    },
+  });
+}
+
 /** Upload de documento — cookie é enviado automaticamente. */
 export async function uploadDocument(
   file: File,
@@ -359,14 +379,14 @@ export async function fetchDocuments(params?: {
   return request<{
     documents: Array<{
       id: string;
-      name: string;
+      filename: string;
       type: string;
-      size: string;
-      uploaded_at: string;
       status: string;
-      company_id?: string;
+      parsed: boolean;
+      error_message: string | null;
+      ai_confidence: number | null;
+      created_at: string;
     }>;
-    total: number;
   }>(url);
 }
 
@@ -411,11 +431,10 @@ export async function fetchUsers(params?: {
     users: Array<{
       username: string;
       email?: string;
+      role: string;
       is_active: boolean;
       created_at: string;
-      last_login?: string;
     }>;
-    total: number;
   }>(url);
 }
 
@@ -450,8 +469,11 @@ export async function fetchKnowledgeArticle(articleId: string) {
     id: string;
     title: string;
     category: string;
+    subcategory?: string;
     content: string;
     tags: string[];
+    source?: string;
+    source_url?: string;
     created_at: string;
   }>(`/knowledge/articles/${articleId}`);
 }
@@ -500,6 +522,268 @@ export async function seedCompanyAccounts(companyId: string) {
     message: string;
     accounts_created: number;
   }>(`/companies/${companyId}/seed-accounts`, {
+    method: "POST",
+  });
+}
+
+/** Cria nova empresa. */
+export async function createCompany(data: {
+  name: string;
+  cnpj: string;
+}) {
+  return request<{
+    id: string;
+    name: string;
+    cnpj: string;
+    created_at: string;
+  }>("/companies", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+/** Atualiza empresa existente. */
+export async function updateCompany(
+  companyId: string,
+  data: {
+    name?: string;
+    cnpj?: string;
+  }
+) {
+  return request<{
+    id: string;
+    name: string;
+    cnpj: string;
+    updated_at: string;
+  }>(`/companies/${companyId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+/** Exclui empresa. */
+export async function deleteCompany(companyId: string) {
+  return request<{ message: string }>(`/companies/${companyId}`, {
+    method: "DELETE",
+  });
+}
+
+/** Cria novo artigo na base de conhecimento. */
+export async function createKnowledgeArticle(data: {
+  title: string;
+  content: string;
+  category: string;
+  subcategory?: string;
+  tags?: string[];
+  source?: string;
+  source_url?: string;
+  language?: string;
+}) {
+  return request<{ id: string; message: string }>("/knowledge/articles", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+/** Atualiza artigo existente na base de conhecimento. */
+export async function updateKnowledgeArticle(
+  articleId: string,
+  data: {
+    title?: string;
+    content?: string;
+    category?: string;
+    subcategory?: string;
+    tags?: string[];
+    source?: string;
+    source_url?: string;
+  }
+) {
+  return request<{ id: string; message: string }>(
+    `/knowledge/articles/${articleId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }
+  );
+}
+
+/** Exclui artigo da base de conhecimento. */
+export async function deleteKnowledgeArticle(articleId: string) {
+  return request<{ message: string }>(`/knowledge/articles/${articleId}`, {
+    method: "DELETE",
+  });
+}
+
+/** Upload de PDF para base de conhecimento RAG. */
+export async function uploadKnowledgePDF(
+  file: File,
+  title?: string,
+  category?: string
+) {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (title) formData.append("title", title);
+  if (category) formData.append("category", category);
+
+  const res = await fetch(`${API_URL}/knowledge/upload`, {
+    method: "POST",
+    credentials: "include",
+    body: formData,
+  });
+
+  if (res.status === 401) {
+    if (typeof window !== "undefined") window.location.href = "/login";
+    throw new Error("Sessão expirada");
+  }
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(
+      (data as { detail?: string }).detail ?? `HTTP ${res.status}`
+    );
+  }
+
+  return res.json() as Promise<{ id: string; message: string; title: string }>;
+}
+
+/** Cria registro de documento manualmente. */
+export async function createDocument(data: {
+  company_id: string;
+  file_url: string;
+  original_filename?: string;
+  type: string;
+  status?: string;
+}) {
+  return request<{ id: string; message: string }>("/documents", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+/** Atualiza status e metadados de um documento. */
+export async function updateDocument(
+  documentId: string,
+  data: {
+    status?: string;
+    error_message?: string;
+    ai_confidence?: number;
+  }
+) {
+  return request<{ id: string; message: string }>(
+    `/documents/${documentId}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }
+  );
+}
+
+/** Exclui documento. */
+export async function deleteDocument(documentId: string) {
+  return request<{ message: string }>(`/documents/${documentId}`, {
+    method: "DELETE",
+  });
+}
+
+/** Busca detalhes de um documento específico. */
+export async function fetchDocument(documentId: string) {
+  return request<{
+    id: string;
+    company_id: string;
+    file_url: string;
+    filename: string;
+    type: string;
+    status: string;
+    parsed: boolean;
+    error_message: string | null;
+    ai_confidence: number | null;
+    created_at: string;
+    updated_at: string;
+  }>(`/documents/${documentId}`);
+}
+
+/** Health check endpoint. */
+export async function healthCheck(): Promise<{ status: string; service: string; version: string }> {
+  return request<{ status: string; service: string; version: string }>("/health");
+}
+
+/** Readiness check endpoint. */
+export async function readyCheck(): Promise<{ status: string; dependencies: Record<string, string> }> {
+  return request<{ status: string; dependencies: Record<string, string> }>("/ready");
+}
+
+/** Review entry (approve/reject). */
+export async function reviewEntry(entryId: string, data: {
+  approved: boolean;
+  reviewer_notes?: string;
+}) {
+  return request<{ id: string; status: string }>(`/entries/${entryId}/review`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+/** Approve report. */
+export async function approveReport(reportId: string) {
+  return request<{ id: string; approved: boolean; approved_at: string }>(
+    `/reports/${reportId}/approve`,
+    {
+      method: "PATCH",
+    }
+  );
+}
+
+/** Create user (admin). */
+export async function createUser(data: {
+  username: string;
+  email?: string;
+  password: string;
+  role: string;
+}) {
+  return request<{
+    username: string;
+    email?: string;
+    role: string;
+    created_at: string;
+  }>("/admin/users", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+/** Update user (admin). */
+export async function updateUser(username: string, data: {
+  email?: string;
+  role?: string;
+}) {
+  return request<{
+    username: string;
+    email?: string;
+    role: string;
+    updated_at: string;
+  }>(`/admin/users/${username}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+/** Deactivate user (admin). */
+export async function deactivateUser(username: string) {
+  return request<{ username: string; is_active: boolean }>(
+    `/admin/users/${username}/deactivate`,
+    {
+      method: "PATCH",
+    }
+  );
+}
+
+/** Seed knowledge base (admin). */
+export async function seedKnowledge() {
+  return request<{
+    success: boolean;
+    message: string;
+    articles_created: number;
+  }>("/admin/knowledge/seed", {
     method: "POST",
   });
 }
