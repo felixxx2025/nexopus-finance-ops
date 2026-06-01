@@ -25,6 +25,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+import contextvars
 
 # ── Configuração centralizada ─────────────────────────────────────────────────
 from apps.api.config import settings  # noqa: E402
@@ -36,6 +37,9 @@ logging.basicConfig(
 )
 
 _API_VERSION = "2.1.0"
+
+# ── Correlation ID Context Variable ─────────────────────────────────────────────
+correlation_id_var = contextvars.ContextVar("correlation_id", default=None)
 
 # ── Hashing de senha ──────────────────────────────────────────────────────────
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -145,6 +149,17 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With", "X-CSRF-Token"],
 )
+
+
+@app.middleware("http")
+async def add_correlation_id(request: Request, call_next):
+    """Gera e propaga correlation ID para tracing distribuído."""
+    correlation_id = request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
+    correlation_id_var.set(correlation_id)
+    
+    response = await call_next(request)
+    response.headers["X-Correlation-ID"] = correlation_id
+    return response
 
 
 @app.middleware("http")
@@ -2065,3 +2080,18 @@ async def seed_knowledge_base(
         "knowledge": stats_kb,
         "templates": stats_templates,
     }
+
+
+@app.post("/telemetry", tags=["infra"])
+async def receive_telemetry(
+    request: Request,
+    data: dict,
+) -> JSONResponse:
+    """Recebe eventos de telemetry do frontend."""
+    correlation_id = correlation_id_var.get() or request.headers.get("X-Correlation-ID")
+    logger.info(
+        "Telemetry event: %s (correlation_id=%s)",
+        data.get("name"),
+        correlation_id,
+    )
+    return JSONResponse(content={"status": "received"})
