@@ -53,8 +53,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     let mounted = true;
     setIsLoading(true);
+    
+    // Add timeout to prevent hanging on fetch errors
+    const timeoutId = setTimeout(() => {
+      if (mounted) {
+        console.warn("Auth check timed out, assuming not logged in");
+        setUser(null);
+        setToken(null);
+        setIsLoading(false);
+        setHasCheckedAuth(true);
+      }
+    }, 5000);
+
     apiMe()
       .then((data) => {
+        clearTimeout(timeoutId);
         if (mounted) {
           setUser(data.username);
           // Token is stored in httpOnly cookie, not accessible via JS
@@ -62,14 +75,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setToken("cookie-auth");
         }
       })
-      .catch(() => {
+      .catch((error) => {
+        clearTimeout(timeoutId);
         if (mounted) {
+          console.warn("Auth check failed:", error);
           // Expected when not logged in - just set user to null
           setUser(null);
           setToken(null);
         }
       })
       .finally(() => {
+        clearTimeout(timeoutId);
         if (mounted) {
           setIsLoading(false);
           setHasCheckedAuth(true);
@@ -78,6 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       mounted = false;
+      clearTimeout(timeoutId);
     };
   }, [hasCheckedAuth]);
 

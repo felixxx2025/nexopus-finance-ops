@@ -21,12 +21,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
 
   if (res.status === 401) {
-    if (
-      typeof window !== "undefined" &&
-      window.location.pathname !== "/login"
-    ) {
-      window.location.href = "/login";
-    }
+    // Don't redirect on 401 to prevent loops - let the auth context handle it
     throw new Error("Sessão expirada. Faça login novamente.");
   }
 
