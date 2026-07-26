@@ -1406,7 +1406,7 @@ class AssistantRequest(BaseModel):
 
 
 @app.post("/ai/assistant", tags=["ai"])
-@limiter.limit("20/minute")
+@limiter.limit("100/minute")
 async def ai_assistant(
     request: Request,
     body: AssistantRequest,
@@ -2051,7 +2051,7 @@ async def list_account_templates(
     sector: Optional[str] = None,
 ) -> dict:
     """Lista planos de contas por setor."""
-    from services.knowledge.template_service import get_account_template  # noqa: PLC0415
+    from services.knowledge.template_service import get_account_template, list_all_account_templates  # noqa: PLC0415
 
     if sector:
         template = await get_account_template(db, sector)
@@ -2059,11 +2059,9 @@ async def list_account_templates(
             return {"templates": [template], "count": 1}
         return {"templates": [], "count": 0}
 
-    return {
-        "templates": [],
-        "count": 0,
-        "message": "Use ?sector=servicos ou ?sector=comercio para buscar específico",
-    }
+    # Listar todos
+    templates = await list_all_account_templates(db, sector=sector)
+    return {"templates": templates, "count": len(templates)}
 
 
 @app.post("/admin/knowledge/seed", tags=["admin"])

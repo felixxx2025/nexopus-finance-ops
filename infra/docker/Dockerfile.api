@@ -7,6 +7,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/* && \
     addgroup --system app && adduser --system --ingroup app --no-create-home app
 
+# Criar diretório para cache de modelos HuggingFace com permissões corretas
+RUN mkdir -p /app/.cache/huggingface && \
+    chown -R app:app /app/.cache
+
 # Requirements da API
 COPY apps/api/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
@@ -20,6 +24,8 @@ COPY alembic.ini /app/alembic.ini
 COPY docs/knowledge_base /app/docs/knowledge_base
 
 ENV PYTHONPATH=/app
+ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
+ENV HF_HOME=/app/.cache/huggingface
 
 # Entrypoint: roda migrações e depois inicia a API
 COPY infra/docker/entrypoint-api.sh /entrypoint.sh

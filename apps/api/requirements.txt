@@ -22,6 +22,7 @@ pydantic-settings>=2.2.0
 itsdangerous>=2.1.0
 # Embeddings locais (RAG)
 sentence-transformers>=2.7.0
+numpy>=1.24.0
 # Observabilidade
 sentry-sdk[fastapi,sqlalchemy,celery,redis]>=2.0.0
 prometheus-fastapi-instrumentator>=7.0.0

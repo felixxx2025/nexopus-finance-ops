@@ -70,6 +70,8 @@ services:
       SYNC_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       S3_ENDPOINT: http://minio:9000
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: qwen2:0.5b
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,6 +79,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      ollama:
+        condition: service_started
     networks:
       - nexopus-internal
     restart: unless-stopped
@@ -126,6 +130,31 @@ services:
     networks:
       - nexopus-internal
     restart: unless-stopped
+
+  # ── Ollama (Local LLM Server) ───────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: nexopus-ollama
+    volumes:
+      - ollama-data:/root/.ollama
+      - ./infra/docker/entrypoint-ollama.sh:/entrypoint-ollama.sh:ro
+    environment:
+      - OLLAMA_KEEP_ALIVE=30m
+      - OLLAMA_NUM_THREAD=8
+    ports:
+      - "11434:11434"
+    entrypoint: ["/bin/bash", "/entrypoint-ollama.sh"]
+    networks:
+      - nexopus-internal
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 12G
+        reservations:
+          cpus: '4'
+          memory: 8G
 
   # Nginx reverse proxy for production
   nginx:
@@ -202,3 +231,4 @@ volumes:
   prometheus-data:
   grafana-data:
   loki-data:
+  ollama-data:

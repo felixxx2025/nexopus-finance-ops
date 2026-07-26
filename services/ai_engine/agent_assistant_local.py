@@ -18,7 +18,7 @@ from services.knowledge.rag_service import search_knowledge
 logger = logging.getLogger(__name__)
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3:8b")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2:0.5b")
 
 
 async def stream_answer_local(
@@ -43,94 +43,22 @@ async def stream_answer_local(
         # Buscar contexto RAG se db fornecido (RAG Avançado)
         rag_context = ""
         if db:
-            rag_results = await search_knowledge(db, question, limit=5, min_similarity=0.2, enable_web_search=True)
-            
-            if rag_results:
-                rag_context = "\n\n=== CONTEXTO RELEVANTE DA BASE DE CONHECIMENTO ===\n"
-                for i, result in enumerate(rag_results[:5], 1):
-                    rag_context += f"\n--- Documento {i}: {result['title']} ---\n"
-                    rag_context += f"{result['content'][:800]}...\n"
-                    if result.get('source_url'):
-                        rag_context += f"Fonte: {result['source_url']}\n"
-                    rag_context += f"Similaridade: {result.get('score', 'N/A')}\n"
+            try:
+                rag_results = await search_knowledge(db, question, limit=3, min_similarity=0.2, enable_web_search=False)
+                
+                if rag_results:
+                    rag_context = "\n\n=== CONTEXTO RELEVANTE DA BASE DE CONHECIMENTO ===\n"
+                    for i, result in enumerate(rag_results[:3], 1):
+                        rag_context += f"\n--- Documento {i}: {result['title']} ---\n"
+                        rag_context += f"{result['content'][:400]}...\n"
+                        if result.get('source_url'):
+                            rag_context += f"Fonte: {result['source_url']}\n"
+            except Exception as e:
+                logger.warning("RAG falhou: %s", e)
         
-        # Construir prompt para Ollama com Few-Shot Learning
+        # Construir prompt para Ollama - simplificado para performance
         system_prompt = """Você é um assistente financeiro especializado em contabilidade brasileira.
-
-=== EXEMPLOS DE RESPOSTAS ESPERADAS (FEW-SHOT) ===
-
-Exemplo 1:
-Q: Como calcular o IRPJ pelo lucro real?
-A: O IRPJ pelo lucro real é calculado sobre o lucro contábil ajustado:
-
-**Passo a passo:**
-1. Partir do lucro líquido contábil
-2. Adicionar adições (despesas não dedutíveis):
-   - Multas fiscais
-   - Despesas não comprovadas
-   - Provisões não dedutíveis
-3. Subtrair exclusões (receitas não tributáveis):
-   - Dividendos recebidos
-   - Lucros no exterior
-4. Aplicar alíquotas:
-   - 15% sobre o lucro real
-   - 10% adicional sobre o excedente de R$ 20.000/mês
-
-**Fórmula:** IRPJ = (Lucro Real × 15%) + (Excedente × 10%)
-
-Exemplo 2:
-Q: O que é a equação patrimonial?
-A: A equação patrimonial é o princípio fundamental da contabilidade:
-
-**Equação:** ATIVO = PASSIVO + PATRIMÔNIO LÍQUIDO
-
-**Componentes:**
-- **Ativo:** Bens e direitos da empresa (caixa, contas a receber, estoques)
-- **Passivo:** Obrigações com terceiros (fornecedores, empréstimos, impostos)
-- **Patrimônio Líquido:** Recursos dos proprietários (capital social, reservas, lucros)
-
-Esta equação deve sempre se equilibrar, refletindo a origem e aplicação dos recursos.
-
-Exemplo 3:
-Q: Como estruturar uma DRE?
-A: A DRE (Demonstração do Resultado do Exercício) deve seguir a estrutura da NBC TG 26:
-
-**Estrutura Vertical:**
-1. **Receita Bruta** (vendas + serviços)
-2. **(-) Deduções** (impostos, devoluções, descontos)
-3. **= Receita Líquida**
-4. **(-) Custo dos Bens/Serviços** (CMV/CSP)
-5. **= Lucro Bruto**
-6. **(-) Despesas Operacionais** (vendas, administrativas, financeiras)
-7. **= Resultado Operacional (EBIT)**
-8. **(+/-) Resultado Não Operacional**
-9. **= Lucro Antes do IR/CSLL**
-10. **(-) IRPJ e CSLL**
-11. **= Lucro Líquido do Exercício**
-
-Conforme Lei 6.404/1976 Art. 187.
-
-=== INSTRUÇÕES ===
-
-Use estes exemplos como referência de:
-- Profundidade técnica
-- Estrutura clara com tópicos
-- Exemplos práticos quando possível
-- Citações de normas (NBC TG, Lei 6.404)
-
-Seu objetivo é responder perguntas sobre:
-- DRE (Demonstração do Resultado)
-- Balanço Patrimonial
-- Lei 6.404/1976 (Lei das S.A.)
-- NBC TG (Normas Brasileiras de Contabilidade)
-- Partida Dobrada
-- Plano de Contas
-- IRPJ e CSLL
-- Equação Patrimonial
-
-Use o contexto fornecido da base de conhecimento para fundamentar suas respostas.
-Se não houver contexto relevante, responda com base em seu conhecimento geral.
-Seja claro, objetivo, use exemplos práticos e responda em português."""
+Responda de forma concisa e direta."""
 
         # Adicionar contexto financeiro se disponível
         context_info = ""
@@ -186,7 +114,7 @@ Seja claro, objetivo, use exemplos práticos e responda em português."""
         messages.append({"role": "user", "content": user_message})
         
         # Chamar Ollama com streaming
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.post(
                 f"{OLLAMA_BASE_URL}/api/chat",
                 json={
@@ -197,9 +125,10 @@ Seja claro, objetivo, use exemplos práticos e responda em português."""
                         "num_ctx": 4096,
                         "temperature": 0.7,
                         "top_p": 0.9,
+                        "num_predict": 512,  # Limitar tokens gerados para melhor performance
                     }
                 },
-                timeout=120.0
+                timeout=300.0
             )
             
             if response.status_code != 200:
